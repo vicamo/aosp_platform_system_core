@@ -52,9 +52,8 @@
 
 static int ifc_ctl_sock = -1;
 static int ifc_ctl_sock6 = -1;
-void printerr(char *fmt, ...);
 
-#define DBG 0
+#define DBG 1
 #define INET_ADDRLEN 4
 #define INET6_ADDRLEN 16
 
@@ -121,12 +120,12 @@ int ifc_init(void)
     if (ifc_ctl_sock == -1) {
         ifc_ctl_sock = socket(AF_INET, SOCK_DGRAM, 0);
         if (ifc_ctl_sock < 0) {
-            printerr("socket() failed: %s\n", strerror(errno));
+            ALOGE("socket() failed: %s\n", strerror(errno));
         }
     }
 
     ret = ifc_ctl_sock < 0 ? -1 : 0;
-    if (DBG) printerr("ifc_init_returning %d", ret);
+    if (DBG) ALOGD("ifc_init_returning %d", ret);
     return ret;
 }
 
@@ -135,7 +134,7 @@ int ifc_init6(void)
     if (ifc_ctl_sock6 == -1) {
         ifc_ctl_sock6 = socket(AF_INET6, SOCK_DGRAM, 0);
         if (ifc_ctl_sock6 < 0) {
-            printerr("socket() failed: %s\n", strerror(errno));
+            ALOGE("socket() failed: %s\n", strerror(errno));
         }
     }
     return ifc_ctl_sock6 < 0 ? -1 : 0;
@@ -143,7 +142,7 @@ int ifc_init6(void)
 
 void ifc_close(void)
 {
-    if (DBG) printerr("ifc_close");
+    if (DBG) ALOGD("ifc_close");
     if (ifc_ctl_sock != -1) {
         (void)close(ifc_ctl_sock);
         ifc_ctl_sock = -1;
@@ -204,14 +203,14 @@ static int ifc_set_flags(const char *name, unsigned set, unsigned clr)
 int ifc_up(const char *name)
 {
     int ret = ifc_set_flags(name, IFF_UP, 0);
-    if (DBG) printerr("ifc_up(%s) = %d", name, ret);
+    if (DBG) ALOGD("ifc_up(%s) = %d", name, ret);
     return ret;
 }
 
 int ifc_down(const char *name)
 {
     int ret = ifc_set_flags(name, 0, IFF_UP);
-    if (DBG) printerr("ifc_down(%s) = %d", name, ret);
+    if (DBG) ALOGD("ifc_down(%s) = %d", name, ret);
     return ret;
 }
 
@@ -232,7 +231,7 @@ int ifc_set_addr(const char *name, in_addr_t addr)
     init_sockaddr_in(&ifr.ifr_addr, addr);
 
     ret = ioctl(ifc_ctl_sock, SIOCSIFADDR, &ifr);
-    if (DBG) printerr("ifc_set_addr(%s, xx) = %d", name, ret);
+    if (DBG) ALOGD("ifc_set_addr(%s, xx) = %d", name, ret);
     return ret;
 }
 
@@ -435,7 +434,7 @@ int ifc_set_mask(const char *name, in_addr_t mask)
     init_sockaddr_in(&ifr.ifr_addr, mask);
 
     ret = ioctl(ifc_ctl_sock, SIOCSIFNETMASK, &ifr);
-    if (DBG) printerr("ifc_set_mask(%s, xx) = %d", name, ret);
+    if (DBG) ALOGD("ifc_set_mask(%s, xx) = %d", name, ret);
     return ret;
 }
 
@@ -555,7 +554,7 @@ int ifc_create_default_route(const char *name, in_addr_t gw)
     in_gw.s_addr = gw;
 
     int ret = ifc_act_on_ipv4_route(SIOCADDRT, name, in_dst, 0, in_gw);
-    if (DBG) printerr("ifc_create_default_route(%s, %d) = %d", name, gw, ret);
+    if (DBG) ALOGD("ifc_create_default_route(%s, %d) = %d", name, gw, ret);
     return ret;
 }
 
@@ -792,22 +791,22 @@ ifc_configure(const char *ifname,
     ifc_init();
 
     if (ifc_up(ifname)) {
-        printerr("failed to turn on interface %s: %s\n", ifname, strerror(errno));
+        ALOGE("failed to turn on interface %s: %s\n", ifname, strerror(errno));
         ifc_close();
         return -1;
     }
     if (ifc_set_addr(ifname, address)) {
-        printerr("failed to set ipaddr %s: %s\n", ipaddr_to_string(address), strerror(errno));
+        ALOGE("failed to set ipaddr %s: %s\n", ipaddr_to_string(address), strerror(errno));
         ifc_close();
         return -1;
     }
     if (ifc_set_prefixLength(ifname, prefixLength)) {
-        printerr("failed to set prefixLength %d: %s\n", prefixLength, strerror(errno));
+        ALOGE("failed to set prefixLength %d: %s\n", prefixLength, strerror(errno));
         ifc_close();
         return -1;
     }
     if (ifc_create_default_route(ifname, gateway)) {
-        printerr("failed to set default route %s: %s\n", ipaddr_to_string(gateway), strerror(errno));
+        ALOGE("failed to set default route %s: %s\n", ipaddr_to_string(gateway), strerror(errno));
         ifc_close();
         return -1;
     }
@@ -833,7 +832,7 @@ int ifc_act_on_ipv6_route(int action, const char *ifname, struct in6_addr dst, i
 
     ifindex = if_nametoindex(ifname);
     if (ifindex == 0) {
-        printerr("if_nametoindex() failed: interface %s\n", ifname);
+        ALOGE("if_nametoindex() failed: interface %s\n", ifname);
         return -ENXIO;
     }
 
@@ -884,7 +883,7 @@ int ifc_act_on_route(int action, const char *ifname, const char *dst, int prefix
     ret = getaddrinfo(dst, NULL, &hints, &addr_ai);
 
     if (ret != 0) {
-        printerr("getaddrinfo failed: invalid address %s\n", dst);
+        ALOGE("getaddrinfo failed: invalid address %s\n", dst);
         return -EINVAL;
     }
 
@@ -898,20 +897,20 @@ int ifc_act_on_route(int action, const char *ifname, const char *dst, int prefix
 
     if (((addr_ai->ai_family == AF_INET6) && (prefix_length < 0 || prefix_length > 128)) ||
             ((addr_ai->ai_family == AF_INET) && (prefix_length < 0 || prefix_length > 32))) {
-        printerr("ifc_add_route: invalid prefix length");
+        ALOGE("ifc_add_route: invalid prefix length");
         freeaddrinfo(addr_ai);
         return -EINVAL;
     }
 
     ret = getaddrinfo(gw, NULL, &hints, &gw_ai);
     if (ret != 0) {
-        printerr("getaddrinfo failed: invalid gateway %s\n", gw);
+        ALOGE("getaddrinfo failed: invalid gateway %s\n", gw);
         freeaddrinfo(addr_ai);
         return -EINVAL;
     }
 
     if (addr_ai->ai_family != gw_ai->ai_family) {
-        printerr("ifc_add_route: different address families: %s and %s\n", dst, gw);
+        ALOGE("ifc_add_route: different address families: %s and %s\n", dst, gw);
         freeaddrinfo(addr_ai);
         freeaddrinfo(gw_ai);
         return -EINVAL;
@@ -928,7 +927,7 @@ int ifc_act_on_route(int action, const char *ifname, const char *dst, int prefix
         ret = ifc_act_on_ipv4_route(action, ifname, ipv4_dst.sin_addr,
                 prefix_length, ipv4_gw.sin_addr);
     } else {
-        printerr("ifc_add_route: getaddrinfo returned un supported address family %d\n",
+        ALOGE("ifc_add_route: getaddrinfo returned un supported address family %d\n",
                   addr_ai->ai_family);
         ret = -EAFNOSUPPORT;
     }
@@ -945,7 +944,7 @@ int ifc_add_ipv4_route(const char *ifname, struct in_addr dst, int prefix_length
       struct in_addr gw)
 {
     int i =ifc_act_on_ipv4_route(SIOCADDRT, ifname, dst, prefix_length, gw);
-    if (DBG) printerr("ifc_add_ipv4_route(%s, xx, %d, xx) = %d", ifname, prefix_length, i);
+    if (DBG) ALOGD("ifc_add_ipv4_route(%s, xx, %d, xx) = %d", ifname, prefix_length, i);
     return i;
 }
 
@@ -955,17 +954,21 @@ int ifc_add_ipv4_route(const char *ifname, struct in_addr dst, int prefix_length
 int ifc_add_ipv6_route(const char *ifname, struct in6_addr dst, int prefix_length,
       struct in6_addr gw)
 {
-    return ifc_act_on_ipv6_route(SIOCADDRT, ifname, dst, prefix_length, gw);
+    int i = ifc_act_on_ipv6_route(SIOCADDRT, ifname, dst, prefix_length, gw);
+    if (DBG) ALOGD("ifc_add_ipv6_route(%s, xx, %d, xx) = %d", ifname, prefix_length, i);
+    return i;
 }
 
 int ifc_add_route(const char *ifname, const char *dst, int prefix_length, const char *gw)
 {
     int i = ifc_act_on_route(SIOCADDRT, ifname, dst, prefix_length, gw);
-    if (DBG) printerr("ifc_add_route(%s, %s, %d, %s) = %d", ifname, dst, prefix_length, gw, i);
+    if (DBG) ALOGD("ifc_add_route(%s, %s, %d, %s) = %d", ifname, dst, prefix_length, gw, i);
     return i;
 }
 
 int ifc_remove_route(const char *ifname, const char*dst, int prefix_length, const char *gw)
 {
-    return ifc_act_on_route(SIOCDELRT, ifname, dst, prefix_length, gw);
+    int i = ifc_act_on_route(SIOCDELRT, ifname, dst, prefix_length, gw);
+    if (DBG) ALOGD("ifc_remove_route(%s, %s, %d, %s) = %d", ifname, dst, prefix_length, gw, i);
+    return i;
 }
