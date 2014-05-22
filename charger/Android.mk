@@ -12,10 +12,6 @@ ifeq ($(strip $(BOARD_CHARGER_DISABLE_INIT_BLANK)),true)
 LOCAL_CFLAGS := -DCHARGER_DISABLE_INIT_BLANK
 endif
 
-ifeq ($(strip $(BOARD_CHARGER_ENABLE_SUSPEND)),true)
-LOCAL_CFLAGS += -DCHARGER_ENABLE_SUSPEND
-endif
-
 LOCAL_MODULE := charger
 LOCAL_MODULE_TAGS := optional
 LOCAL_FORCE_STATIC_EXECUTABLE := true
@@ -25,9 +21,6 @@ LOCAL_UNSTRIPPED_PATH := $(TARGET_ROOT_OUT_UNSTRIPPED)
 LOCAL_C_INCLUDES := bootable/recovery
 
 LOCAL_STATIC_LIBRARIES := libminui libpixelflinger_static libpng
-ifeq ($(strip $(BOARD_CHARGER_ENABLE_SUSPEND)),true)
-LOCAL_STATIC_LIBRARIES += libsuspend
-endif
 LOCAL_STATIC_LIBRARIES += libz libstdc++ libcutils libm libc
 
 include $(BUILD_EXECUTABLE)
@@ -40,7 +33,7 @@ _img_modules += $$(LOCAL_MODULE)
 LOCAL_SRC_FILES := $1
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE_CLASS := ETC
-LOCAL_MODULE_PATH := $$(TARGET_ROOT_OUT)/res/images/charger
+LOCAL_MODULE_PATH := $$(TARGET_OUT)/wmtapp/chargerimages
 include $$(BUILD_PREBUILT)
 endef
 

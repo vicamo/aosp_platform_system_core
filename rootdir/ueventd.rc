@@ -7,6 +7,22 @@
 /dev/urandom              0666   root       root
 /dev/ashmem               0666   root       root
 /dev/binder               0666   root       root
+/dev/ump                  0666   root       root
+/dev/mali                 0666   root       root
+/dev/wmtts                0666   root       root
+/dev/sensor_ctrl          0666   root       root
+/dev/ecompass_ctrl        0644   system     system
+/dev/lsensor_ctrl         0666   root       root
+/dev/gyro_ctrl            0644   system     system
+/dev/video0               0666   root       root
+/dev/video1               0666   root       root
+/dev/wmtgpio              0666   root       root
+/dev/ppp                  0666   root       root
+/dev/dmt                  0666   root       root
+/dev/wmt-lock             0666   root       root
+/dev/wmt-vd               0666   root       root
+/dev/wmt-sync             0660   system     system
+/dev/psensor_ctrl         0666   system     system
 
 # Anyone can read the logs, but if they're not in the "logs"
 # group, then they'll only see log entries for their UID.
@@ -42,6 +58,7 @@
 /dev/oncrpc/*             0660   root       system
 /dev/adsp/*               0660   system     audio
 /dev/snd/*                0660   system     audio
+/dev/wmt_echo             0660   system     audio
 /dev/mt9t013              0660   system     system
 /dev/msm_camera/*         0660   system     system
 /dev/akm8976_daemon       0640   compass    system
@@ -79,9 +96,24 @@
 
 # CDMA radio interface MUX
 /dev/ts0710mux*           0640   radio      radio
-/dev/ppp                  0660   radio      vpn
+/dev/ppp                  0666   radio      vpn
+
+#ril modem need
+/dev/ttyACM*              0666   radio      radio
+/dev/ttyUSB*              0666   radio      radio
+/dev/ALPU-MP              0660   radio      radio
 
 # sysfs properties
 /sys/devices/virtual/input/input*   enable      0660  root   input
 /sys/devices/virtual/input/input*   poll_delay  0660  root   input
 /sys/devices/virtual/usb_composite/*   enable      0664  root   system
+
+
+#bluetooth
+/dev/ttyS1              0666   root       root
+/dev/ttyS2              0666   root       root
+/dev/ttyS3              0666   root       root
+
+#3g
+/dev/ttyWMT*              0666   root       root
+

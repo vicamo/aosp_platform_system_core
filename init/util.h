@@ -38,6 +38,8 @@ void remove_link(const char *oldpath, const char *newpath);
 int wait_for_file(const char *filename, int timeout);
 void open_devnull_stdio(void);
 void get_hardware_name(char *hardware, unsigned int *revision);
+int ubi_attach_mtd(const char *name);
+int ubi_detach_dev(int dev);
 void import_kernel_cmdline(int in_qemu, void (*import_kernel_nv)(char *name, int in_qemu));
 int make_dir(const char *path, mode_t mode);
 int restorecon(const char *pathname);

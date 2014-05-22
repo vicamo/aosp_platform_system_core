@@ -87,3 +87,19 @@ $(DIRS):
 	@mkdir -p $@
 
 ALL_PREBUILT += $(DIRS)
+
+include $(CLEAR_VARS) 
+MYPATH:=$(PRODUCT_OUT)/system
+LOCAL_PATH:=$(MYPATH)
+LOCAL_PREBUILT_LIBS:=ppp.so
+LOCAL_MODULE_TAGS := optional
+$(MYPATH)/ppp.so:private_my_build_target
+.phony: private_my_build_target
+private_my_build_target:
+	@touch $(MYPATH)/ppp.so
+	@echo "copy rootdir/system files"
+	@mkdir -p $(TARGET_ROOT_OUT)/../system
+	@cp system/core/rootdir/system/* $(TARGET_ROOT_OUT)/../system -rf
+	@find $(TARGET_ROOT_OUT)/../system -name ".svn" |xargs rm -rf
+
+include $(BUILD_MULTI_PREBUILT)

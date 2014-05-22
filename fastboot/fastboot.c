@@ -48,7 +48,9 @@
 #include <sparse/sparse.h>
 #include <zipfile/zipfile.h>
 
+#include "usb.h"
 #include "fastboot.h"
+
 
 #ifndef O_BINARY
 #define O_BINARY 0
@@ -64,8 +66,10 @@ boot_img_hdr *mkbootimg(void *kernel, unsigned kernel_size,
                         unsigned page_size, unsigned base,
                         unsigned *bootimg_size);
 
-static usb_handle *usb = 0;
-static const char *serial = 0;
+//static usb_handle *usb = 0;
+//static const char *serial = 0;
+
+
 static const char *product = 0;
 static const char *cmdline = 0;
 static int wipe_data = 0;
@@ -75,6 +79,7 @@ static int64_t sparse_limit = -1;
 static int64_t target_sparse_limit = -1;
 
 static unsigned base_addr = 0x10000000;
+
 
 void die(const char *fmt, ...)
 {
@@ -152,6 +157,8 @@ int64_t file_size(const char *fn)
     return off;
 }
 
+//:< , it seems that fastboot.c doesn't free memory allocated by this function,
+//     let it be, i don't want to fix this right now.
 void *load_file(const char *fn, unsigned *_sz)
 {
     char *data;
@@ -186,14 +193,16 @@ oops:
 }
 #endif
 
-int match_fastboot(usb_ifc_info *info)
-{
-    return match_fastboot_with_serial(info, serial);
+
+static unsigned short getVendorId(){
+    return vendor_id;
 }
 
 int match_fastboot_with_serial(usb_ifc_info *info, const char *local_serial)
 {
-    if(!(vendor_id && (info->dev_vendor == vendor_id)) &&
+    unsigned short vid = getVendorId();
+
+    if(!(vid && (info->dev_vendor == vid)) &&
        (info->dev_vendor != 0x18d1) &&  // Google
        (info->dev_vendor != 0x8087) &&  // Intel
        (info->dev_vendor != 0x0451) &&
@@ -205,6 +214,7 @@ int match_fastboot_with_serial(usb_ifc_info *info, const char *local_serial)
        (info->dev_vendor != 0x413c) &&  // DELL
        (info->dev_vendor != 0x2314) &&  // INQ Mobile
        (info->dev_vendor != 0x0b05) &&  // Asus
+       (info->dev_vendor != 0x040d) &&  // WMT       
        (info->dev_vendor != 0x0bb4))    // HTC
             return -1;
     if(info->ifc_class != 0xff) return -1;
@@ -217,7 +227,13 @@ int match_fastboot_with_serial(usb_ifc_info *info, const char *local_serial)
     return 0;
 }
 
-int list_devices_callback(usb_ifc_info *info)
+int match_fastboot(usb_ifc_info *info, const char *serial)
+{
+    return match_fastboot_with_serial(info, serial);
+}
+
+
+int list_devices_callback(usb_ifc_info *info, const char *serial)
 {
     if (match_fastboot_with_serial(info, NULL) == 0) {
         char* serial = info->serial_number;
@@ -240,29 +256,16 @@ int list_devices_callback(usb_ifc_info *info)
     return -1;
 }
 
-usb_handle *open_device(void)
+usb_handle *open_device(const char *serial)
 {
-    static usb_handle *usb = 0;
-    int announce = 1;
-
-    if(usb) return usb;
-
-    for(;;) {
-        usb = usb_open(match_fastboot);
-        if(usb) return usb;
-        if(announce) {
-            announce = 0;
-            fprintf(stderr,"< waiting for device >\n");
-        }
-        sleep(1);
-    }
+    return usb_open(match_fastboot, serial);
 }
 
 void list_devices(void) {
     // We don't actually open a USB device here,
     // just getting our callback called so we can
     // list all the connected devices.
-    usb_open(list_devices_callback);
+    usb_open(list_devices_callback, NULL);
 }
 
 void usage(void)
@@ -401,7 +404,7 @@ static char *strip(char *s)
 }
 
 #define MAX_OPTIONS 32
-static int setup_requirement_line(char *name)
+static int setup_requirement_line(fb_action_list *list, char *name)
 {
     char *val[MAX_OPTIONS];
     const char **out;
@@ -455,11 +458,11 @@ static int setup_requirement_line(char *name)
         if (out[n] == 0) return -1;
     }
 
-    fb_queue_require(prod, name, invert, n, out);
+    fb_queue_require(list, prod, name, invert, n, out);
     return 0;
 }
 
-static void setup_requirements(char *data, unsigned sz)
+static void setup_requirements(fb_action_list *list, char *data, unsigned sz)
 {
     char *s;
 
@@ -467,7 +470,7 @@ static void setup_requirements(char *data, unsigned sz)
     while (sz-- > 0) {
         if(*s == '\n') {
             *s++ = 0;
-            if (setup_requirement_line(data)) {
+            if (setup_requirement_line(list, data)) {
                 die("out of memory");
             }
             data = s;
@@ -477,13 +480,13 @@ static void setup_requirements(char *data, unsigned sz)
     }
 }
 
-void queue_info_dump(void)
+void queue_info_dump(fb_action_list *list)
 {
-    fb_queue_notice("--------------------------------------------");
-    fb_queue_display("version-bootloader", "Bootloader Version...");
-    fb_queue_display("version-baseband",   "Baseband Version.....");
-    fb_queue_display("serialno",           "Serial Number........");
-    fb_queue_notice("--------------------------------------------");
+    fb_queue_notice(list,  "--------------------------------------------");
+    fb_queue_display(list, "version-bootloader", "Bootloader Version...");
+    fb_queue_display(list, "version-baseband",   "Baseband Version.....");
+    fb_queue_display(list, "serialno",           "Serial Number........");
+    fb_queue_notice(list,  "--------------------------------------------");
 }
 
 
@@ -526,7 +529,8 @@ static int64_t get_target_sparse_limit(struct usb_handle *usb)
 {
     int64_t limit = 0;
     char response[FB_RESPONSE_SZ + 1];
-    int status = fb_getvar(usb, response, "max-download-size");
+    char errBuf[1024]={0};
+	int status = fb_getvar(usb, response, errBuf, sizeof(errBuf), "max-download-size");
 
     if (!status) {
         limit = strtoul(response, NULL, 0);
@@ -569,15 +573,16 @@ static int64_t get_sparse_limit(struct usb_handle *usb, int64_t size)
  * erase partitions of type ext4 before flashing a filesystem so no stale
  * inodes are left lying around.  Otherwise, e2fsck gets very upset.
  */
-static int needs_erase(const char *part)
+static int needs_erase(usb_handle *usb, const char *part)
 {
     /* The function fb_format_supported() currently returns the value
      * we want, so just call it.
      */
-     return fb_format_supported(usb, part);
+     char errBuf[1024];
+     return fb_format_supported(usb, part, errBuf, sizeof(errBuf));
 }
 
-void do_flash(usb_handle *usb, const char *pname, const char *fname)
+void do_flash(usb_handle *usb,fb_action_list *actionList, const char *pname, const char *fname)
 {
     int64_t sz64;
     void *data;
@@ -592,27 +597,27 @@ void do_flash(usb_handle *usb, const char *pname, const char *fname)
         }
         while (*s) {
             sz64 = sparse_file_len(*s, true, false);
-            fb_queue_flash_sparse(pname, *s++, sz64);
+            fb_queue_flash_sparse(actionList, pname, *s++, sz64);
         }
     } else {
         unsigned int sz;
         data = load_file(fname, &sz);
         if (data == 0) die("cannot load '%s': %s\n", fname, strerror(errno));
-        fb_queue_flash(pname, data, sz);
+        fb_queue_flash(actionList, pname, data, sz);
     }
 }
 
-void do_update_signature(zipfile_t zip, char *fn)
+void do_update_signature(fb_action_list *list, zipfile_t zip, char *fn)
 {
     void *data;
     unsigned sz;
     data = unzip_file(zip, fn, &sz);
     if (data == 0) return;
-    fb_queue_download("signature", data, sz);
-    fb_queue_command("signature", "installing signature");
+    fb_queue_download(list, "signature", data, sz);
+    fb_queue_command(list, "signature", "installing signature");
 }
 
-void do_update(char *fn, int erase_first)
+void do_update(usb_handle *usb, fb_action_list *list, char *fn, int erase_first)
 {
     void *zdata;
     unsigned zsize;
@@ -620,9 +625,9 @@ void do_update(char *fn, int erase_first)
     unsigned sz;
     zipfile_t zip;
 
-    queue_info_dump();
+    queue_info_dump(list);
 
-    fb_queue_query_save("product", cur_product, sizeof(cur_product));
+    fb_queue_getvar_save(list, "product", cur_product, sizeof(cur_product));
 
     zdata = load_file(fn, &zsize);
     if (zdata == 0) die("failed to load '%s': %s", fn, strerror(errno));
@@ -645,35 +650,35 @@ void do_update(char *fn, int erase_first)
         sz = strlen(tmp);
     }
 
-    setup_requirements(data, sz);
+    setup_requirements(list, data, sz);
 
     data = unzip_file(zip, "boot.img", &sz);
     if (data == 0) die("update package missing boot.img");
-    do_update_signature(zip, "boot.sig");
-    if (erase_first && needs_erase("boot")) {
-        fb_queue_erase("boot");
+    do_update_signature(list, zip, "boot.sig");
+    if (erase_first && needs_erase(usb, "boot")) {
+        fb_queue_erase(list, "boot");
     }
-    fb_queue_flash("boot", data, sz);
+    fb_queue_flash(list, "boot", data, sz);
 
     data = unzip_file(zip, "recovery.img", &sz);
     if (data != 0) {
-        do_update_signature(zip, "recovery.sig");
-        if (erase_first && needs_erase("recovery")) {
-            fb_queue_erase("recovery");
+        do_update_signature(list, zip, "recovery.sig");
+        if (erase_first && needs_erase(usb, "recovery")) {
+            fb_queue_erase(list, "recovery");
         }
-        fb_queue_flash("recovery", data, sz);
+        fb_queue_flash(list, "recovery", data, sz);
     }
 
     data = unzip_file(zip, "system.img", &sz);
     if (data == 0) die("update package missing system.img");
-    do_update_signature(zip, "system.sig");
-    if (erase_first && needs_erase("system")) {
-        fb_queue_erase("system");
+    do_update_signature(list, zip, "system.sig");
+    if (erase_first && needs_erase(usb, "system")) {
+        fb_queue_erase(list, "system");
     }
-    fb_queue_flash("system", data, sz);
+    fb_queue_flash(list, "system", data, sz);
 }
 
-void do_send_signature(char *fn)
+void do_send_signature(fb_action_list *list, char *fn)
 {
     void *data;
     unsigned sz;
@@ -687,59 +692,61 @@ void do_send_signature(char *fn)
     data = load_file(fn, &sz);
     strcpy(xtn,".img");
     if (data == 0) return;
-    fb_queue_download("signature", data, sz);
-    fb_queue_command("signature", "installing signature");
+    fb_queue_download(list, "signature", data, sz);
+    fb_queue_command(list, "signature", "installing signature");
 }
 
-void do_flashall(int erase_first)
+void do_flashall(usb_handle *usb, fb_action_list *list, int erase_first)
 {
     char *fname;
     void *data;
     unsigned sz;
 
-    queue_info_dump();
+    queue_info_dump(list);
 
-    fb_queue_query_save("product", cur_product, sizeof(cur_product));
+    fb_queue_getvar_save(list, "product", cur_product, sizeof(cur_product));
 
     fname = find_item("info", product);
     if (fname == 0) die("cannot find android-info.txt");
     data = load_file(fname, &sz);
     if (data == 0) die("could not load android-info.txt: %s", strerror(errno));
-    setup_requirements(data, sz);
+    setup_requirements(list, data, sz);
 
     fname = find_item("boot", product);
     data = load_file(fname, &sz);
     if (data == 0) die("could not load boot.img: %s", strerror(errno));
-    do_send_signature(fname);
-    if (erase_first && needs_erase("boot")) {
-        fb_queue_erase("boot");
+    do_send_signature(list, fname);
+    if (erase_first && needs_erase(usb, "boot")) {
+        fb_queue_erase(list, "boot");
     }
-    fb_queue_flash("boot", data, sz);
+    fb_queue_flash(list, "boot", data, sz);
 
     fname = find_item("recovery", product);
     data = load_file(fname, &sz);
     if (data != 0) {
-        do_send_signature(fname);
-        if (erase_first && needs_erase("recovery")) {
-            fb_queue_erase("recovery");
+        do_send_signature(list, fname);
+        if (erase_first && needs_erase(usb, "recovery")) {
+            fb_queue_erase(list, "recovery");
         }
-        fb_queue_flash("recovery", data, sz);
+        fb_queue_flash(list, "recovery", data, sz);
     }
 
     fname = find_item("system", product);
     data = load_file(fname, &sz);
     if (data == 0) die("could not load system.img: %s", strerror(errno));
-    do_send_signature(fname);
-    if (erase_first && needs_erase("system")) {
-        fb_queue_erase("system");
+    do_send_signature(list, fname);
+    if (erase_first && needs_erase(usb, "system")) {
+        fb_queue_erase(list, "system");
     }
-    fb_queue_flash("system", data, sz);
+    fb_queue_flash(list, "system", data, sz);
 }
 
 #define skip(n) do { argc -= (n); argv += (n); } while (0)
 #define require(n) do { if (argc < (n)) {usage(); exit(1);}} while (0)
 
-int do_oem_command(int argc, char **argv)
+void fb_queue_oemdisplay(fb_action_list *list,const char *cmd, const char *msg);
+
+int do_oem_command(fb_action_list *list, int argc, char **argv)
 {
     int i;
     char command[256];
@@ -753,7 +760,12 @@ int do_oem_command(int argc, char **argv)
         strcat(command," ");
     }
 
-    fb_queue_command(command,"");
+    printf("oem command is %s\n", command);
+
+    if(memcmp(command, "oem nand:", 9) == 0)
+		fb_queue_oemdisplay(list, command, "");
+	else
+        fb_queue_command(list, command,"");
     return 0;
 }
 
@@ -798,7 +810,7 @@ static int64_t parse_num(const char *arg)
     return num;
 }
 
-int main(int argc, char **argv)
+int fastboot_main(int argc, char **argv)
 {
     int wants_wipe = 0;
     int wants_reboot = 0;
@@ -810,6 +822,12 @@ int main(int argc, char **argv)
     int status;
     int c;
     int r;
+	fb_action_list * actionList = NULL;
+    int announce = 1;
+
+	usb_handle *usb = 0;
+    char *serial = NULL;
+	char errBuf[1024]={0};
 
     const struct option longopts = { 0, 0, 0, 0 };
 
@@ -892,36 +910,52 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    usb = open_device();
+    actionList = init_fb_action_list();
+	if(actionList == NULL){
+       fprintf(stderr, "Fail to alloc action list\n");
+	   return -1;
+	}
+
+    usb = open_device(serial);
+
+    while(usb == NULL) {
+        usb = open_device(serial);
+        if(usb == NULL && announce) {
+            announce = 0;
+            fprintf(stderr,"< waiting for device >\n");
+        }
+        sleep(1);
+    }
+
 
     while (argc > 0) {
         if(!strcmp(*argv, "getvar")) {
             require(2);
-            fb_queue_display(argv[1], argv[1]);
+            fb_queue_display(actionList, argv[1], argv[1]);
             skip(2);
         } else if(!strcmp(*argv, "erase")) {
             require(2);
 
-            if (fb_format_supported(usb, argv[1])) {
+            if (fb_format_supported(usb, argv[1], errBuf, sizeof(errBuf))) {
                 fprintf(stderr, "******** Did you mean to fastboot format this partition?\n");
             }
 
-            fb_queue_erase(argv[1]);
+            fb_queue_erase(actionList, argv[1]);
             skip(2);
         } else if(!strcmp(*argv, "format")) {
             require(2);
-            if (erase_first && needs_erase(argv[1])) {
-                fb_queue_erase(argv[1]);
+            if (erase_first && needs_erase(usb, argv[1])) {
+                fb_queue_erase(actionList, argv[1]);
             }
-            fb_queue_format(argv[1], 0);
+            fb_queue_format(actionList, argv[1], 0);
             skip(2);
         } else if(!strcmp(*argv, "signature")) {
             require(2);
             data = load_file(argv[1], &sz);
             if (data == 0) die("could not load '%s': %s", argv[1], strerror(errno));
             if (sz != 256) die("signature must be 256 bytes");
-            fb_queue_download("signature", data, sz);
-            fb_queue_command("signature", "installing signature");
+            fb_queue_download(actionList, "signature", data, sz);
+            fb_queue_command(actionList, "signature", "installing signature");
             skip(2);
         } else if(!strcmp(*argv, "reboot")) {
             wants_reboot = 1;
@@ -930,7 +964,7 @@ int main(int argc, char **argv)
             wants_reboot_bootloader = 1;
             skip(1);
         } else if (!strcmp(*argv, "continue")) {
-            fb_queue_command("continue", "resuming boot");
+            fb_queue_command(actionList, "continue", "resuming boot");
             skip(1);
         } else if(!strcmp(*argv, "boot")) {
             char *kname = 0;
@@ -945,9 +979,13 @@ int main(int argc, char **argv)
                 skip(1);
             }
             data = load_bootable_image(page_size, kname, rname, &sz, cmdline);
-            if (data == 0) return 1;
-            fb_queue_download("boot.img", data, sz);
-            fb_queue_command("boot", "booting");
+            if (data == 0) {
+                uninit_fb_action_list(actionList);
+				usb_close(usb);
+				return 1;
+            }
+            fb_queue_download(actionList, "boot.img", data, sz);
+            fb_queue_command(actionList, "boot", "booting");
         } else if(!strcmp(*argv, "flash")) {
             char *pname = argv[1];
             char *fname = 0;
@@ -960,10 +998,10 @@ int main(int argc, char **argv)
                 skip(2);
             }
             if (fname == 0) die("cannot determine image filename for '%s'", pname);
-            if (erase_first && needs_erase(pname)) {
-                fb_queue_erase(pname);
+            if (erase_first && needs_erase(usb, pname)) {
+                fb_queue_erase(actionList, pname);
             }
-            do_flash(usb, pname, fname);
+            do_flash(usb, actionList, pname, fname);
         } else if(!strcmp(*argv, "flash:raw")) {
             char *pname = argv[1];
             char *kname = argv[2];
@@ -977,43 +1015,50 @@ int main(int argc, char **argv)
             }
             data = load_bootable_image(page_size, kname, rname, &sz, cmdline);
             if (data == 0) die("cannot load bootable image");
-            fb_queue_flash(pname, data, sz);
+            fb_queue_flash(actionList, pname, data, sz);
         } else if(!strcmp(*argv, "flashall")) {
             skip(1);
-            do_flashall(erase_first);
+            do_flashall(usb, actionList, erase_first);
             wants_reboot = 1;
         } else if(!strcmp(*argv, "update")) {
             if (argc > 1) {
-                do_update(argv[1], erase_first);
+                do_update(usb, actionList, argv[1], erase_first);
                 skip(2);
             } else {
-                do_update("update.zip", erase_first);
+                do_update(usb, actionList, "update.zip", erase_first);
                 skip(1);
             }
             wants_reboot = 1;
         } else if(!strcmp(*argv, "oem")) {
-            argc = do_oem_command(argc, argv);
+            argc = do_oem_command(actionList, argc, argv);
         } else {
             usage();
-            return 1;
+            uninit_fb_action_list(actionList);
+            usb_close(usb);
+			return 1;
         }
     }
 
     if (wants_wipe) {
-        fb_queue_erase("userdata");
-        fb_queue_format("userdata", 1);
-        fb_queue_erase("cache");
-        fb_queue_format("cache", 1);
+        fb_queue_erase(actionList, "userdata");
+        fb_queue_format(actionList, "userdata", 1);
+        fb_queue_erase(actionList, "cache");
+        fb_queue_format(actionList, "cache", 1);
     }
     if (wants_reboot) {
-        fb_queue_reboot();
+        fb_queue_reboot(actionList);
     } else if (wants_reboot_bootloader) {
-        fb_queue_command("reboot-bootloader", "rebooting into bootloader");
+        fb_queue_command(actionList, "reboot-bootloader", "rebooting into bootloader");
     }
 
-    if (fb_queue_is_empty())
-        return 0;
+    if (fb_queue_is_empty(actionList)){
+        uninit_fb_action_list(actionList);		
+        usb_close(usb);
+		return 0;
+    }
 
-    status = fb_execute_queue(usb);
-    return (status) ? 1 : 0;
+    status = fb_execute_queue(usb, actionList);
+    uninit_fb_action_list(actionList);
+	usb_close(usb);
+	return (status) ? 1 : 0;
 }

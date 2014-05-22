@@ -25,6 +25,7 @@
 #include <limits.h>
 #include <errno.h>
 
+#include <cutils/log.h>
 #include <cutils/misc.h>
 #include <cutils/sockets.h>
 
@@ -56,6 +57,7 @@ static int persistent_properties_loaded = 0;
 static int property_area_inited = 0;
 
 static int property_set_fd = -1;
+void action_add_queue_tail(struct action *act);
 
 /* White list of permissions for setting property services. */
 struct {
@@ -93,7 +95,13 @@ struct {
     { "persist.service.", AID_SYSTEM,   0 },
     { "persist.security.", AID_SYSTEM,   0 },
     { "persist.service.bdroid.", AID_BLUETOOTH,   0 },
+    { "persist.mtk.wcn.combo.",        AID_SYSTEM,    0 },
     { "selinux."         , AID_SYSTEM,   0 },
+    //[Vic] add this  for "sys_prop: permission denied uid:1003  name:service.bootanim.exit"
+    { "service.bootanim.exit", AID_GRAPHICS,   0 },
+    //[Aksen] add, mediaserver want to set property for whether video is playing, for screen saver
+    { "wmt.video.playing", AID_MEDIA,   0 },    
+    {"msensor.memsicd",     AID_SYSTEM,   0 },    
     { NULL, 0, 0 }
 };
 
@@ -289,6 +297,14 @@ static int check_perms(const char *name, unsigned int uid, unsigned int gid, cha
     if (uid == 0)
         return check_mac_perms(name, sctx);
 
+    //[Bobor] add for allow any process to set wmt prop
+    #define WMT_PROP_NAME_HEAD "wmt."
+    #define WMT_PROP_NAME_BODY ".wmt."
+    if (strncmp(name, WMT_PROP_NAME_HEAD, strlen(WMT_PROP_NAME_HEAD)) == 0
+        || strstr(name, WMT_PROP_NAME_BODY) != NULL) {
+        return 1;
+    }
+    
     for (i = 0; property_perms[i].prefix; i++) {
         if (strncmp(property_perms[i].prefix, name,
                     strlen(property_perms[i].prefix)) == 0) {
@@ -356,7 +372,12 @@ int property_set(const char *name, const char *value)
 
     if(pi != 0) {
         /* ro.* properties may NEVER be modified once set */
-        if(!strncmp(name, "ro.", 3)) return -1;
+        if(!strncmp(name, "ro.", 3)){
+            if(!strcmp(name, "ro.secure") || !strcmp(name, "ro.debuggable"))
+                INFO("Enable %s be overwrite!\n", name);
+            else
+                return -1;
+        }
 
         pa = __system_property_area__;
         update_prop_info(pi, value, valuelen);
@@ -469,6 +490,8 @@ void handle_property_set_fd()
             // the property is written to memory.
             close(s);
         }
+
+		
 #ifdef HAVE_SELINUX
         freecon(source_ctx);
 #endif
@@ -604,6 +627,12 @@ void load_persist_props(void)
     load_persistent_properties();
 }
 
+#define MAIN_DEV_PROP_NAME "persist.wmt.maindev"
+#define MAIN_DEV_PROP_SDCARD "1"
+#define MAIN_DEV_PROP_ROM    "0"
+#define WMT_MAIN_DEV "wmt.main.externaldev"
+#define WMT_DEV_SD   "sdcard"
+
 void start_property_service(void)
 {
     int fd;
@@ -613,6 +642,67 @@ void start_property_service(void)
     load_override_properties();
     /* Read persistent properties after all default values have been loaded. */
     load_persistent_properties();
+
+	ERROR("%s loaded here", PROP_PATH_SYSTEM_DEFAULT);	
+	const char * external = property_get(MAIN_DEV_PROP_NAME);
+	char maindev[512]={0};
+	int size = sizeof(maindev);
+
+	const char* enabled = property_get("persist.wmt.app2sd.enable");
+	if (enabled != NULL && !strcmp(enabled, "true")) {
+		wmt_getsyspara(WMT_MAIN_DEV, maindev, &size);
+		if(!strcmp(maindev, WMT_DEV_SD)){
+			if(external == NULL || strcmp(MAIN_DEV_PROP_SDCARD, external)){
+				property_set(MAIN_DEV_PROP_NAME, MAIN_DEV_PROP_SDCARD);
+				ERROR("wmt.main.externaldev is %s, persist.wmt.maindev is %s", maindev, external==NULL?"null":external);
+			}
+		} else {
+			if(strlen(maindev) <= 0 ||external == NULL || strcmp(MAIN_DEV_PROP_ROM, external)){
+				property_set(MAIN_DEV_PROP_NAME, MAIN_DEV_PROP_ROM);
+				ERROR("wmt.main.externaldev is %s, persist.wmt.maindev is %s", maindev, external);			
+			}
+		}
+	}
+
+	char modemType[8] = {'\0', };
+	char modemEnable[8] = {'\0', };
+	int len = 8;
+	const char* enable = property_get("ril.modem.enable");
+	if(enable)
+	{
+		if(atoi(enable) == 1)
+		{
+			FILE* fp = fopen("/etc/ppp/ril.modem.type", "rb");
+			if(fp)
+			{
+				fread(modemType, 7, 1, fp);
+				if(strlen(modemType) > 0)
+				{
+					modemType[strlen(modemType) - 1] = '\0';
+					property_set("ril.modem.type", modemType);
+				}
+				fclose(fp);
+			}
+			else
+				ERROR("modem type is not set???");
+			fp = fopen("/etc/ppp/ril.modem.type2", "rb");
+			if(fp)
+			{
+				memset(modemType, 0, 8);
+				fread(modemType, 7, 1, fp);
+				if(strlen(modemType) > 0)
+				{
+					modemType[strlen(modemType) - 1] = '\0';
+					property_set("ril.modem.type2", modemType);
+				}
+				fclose(fp);
+			}
+		}
+		else
+			ERROR("ril is not config...");
+	}
+	else
+		ERROR("Maybe ril is not enable...");
 
     fd = create_socket(PROP_SERVICE_NAME, SOCK_STREAM, 0666, 0, 0);
     if(fd < 0) return;

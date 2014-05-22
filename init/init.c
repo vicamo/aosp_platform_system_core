@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <env/lib/wmtel.c>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,6 +49,7 @@
 #include <termios.h>
 
 #include <sys/system_properties.h>
+#include <gpio/wmtgpiodev.c>
 
 #include "devices.h"
 #include "init.h"
@@ -67,6 +69,7 @@ struct selabel_handle *sehandle_prop;
 #endif
 
 static int property_triggers_enabled = 0;
+static unsigned ubifs_enabled = 1;
 
 #if BOOTCHART
 static int   bootchart_count;
@@ -102,6 +105,61 @@ static time_t process_needs_restart;
 
 static const char *ENV[32];
 
+
+int append_opt_bootclasspath(char * opt_bootclasspath){
+    
+
+    char * ok_token[8];
+    char *token = NULL;
+    char * good_bootclasspath = NULL;
+    const char delims[] = ":";
+    int i = 0; 
+    int n;
+    
+    token = strtok(opt_bootclasspath, delims);
+    
+    while (token) {
+        //check if these files exist
+        if ( access(token, F_OK) == 0){
+            ok_token[i++] = token;
+        }
+        else {
+            ERROR("%s not exist!", token);
+        }
+        token = strtok(NULL, delims);                                                                             
+    }
+
+    if( i > 0) {
+        good_bootclasspath = (char *)malloc(512);
+        good_bootclasspath[0] = '\0';
+        for(n = 0; n < i; n++){
+            strcat(good_bootclasspath, ":");
+            strcat(good_bootclasspath, ok_token[n]);
+        }
+
+		for (n = 0; n < 31; n++) {
+		    if (ENV[n]) {
+		        if( !strncmp(ENV[n], "BOOTCLASSPATH=", 14)) {
+		            size_t len = strlen(ENV[n]) + strlen(good_bootclasspath) + 1;
+		            char *entry = malloc(len);
+		            snprintf(entry, len, "%s%s", ENV[n], good_bootclasspath);
+		            free((char*)ENV[n]);
+		            free(good_bootclasspath);
+		            good_bootclasspath = NULL;
+		            ENV[n] = entry;
+
+		            break;
+		        }
+		    }
+		}
+    }
+
+
+    return 0;
+}
+
+
+
 /* add_environment - add "key=value" to the current environment */
 int add_environment(const char *key, const char *val)
 {
@@ -118,6 +176,32 @@ int add_environment(const char *key, const char *val)
     }
 
     return 1;
+}
+
+int remove_environment(const char *key)
+{
+     int n;
+	 int len = strlen(key);
+     for (n = 0; n < 31 ; n++){
+        if(ENV[n] && !strncmp(ENV[n], key, len))
+			break;
+	 }
+
+	 if(n<31){
+     //found
+         ERROR("remove %s", ENV[n]);
+	     free(ENV[n]);
+		 ENV[n]=0;     
+         if(n==30){
+             //last one
+		 }else{		    
+            for(n=n+1; n < 31; n++){
+               ENV[n-1]=ENV[n]; 
+			}
+		 }
+	     return 0;
+	 }
+	 return 1;
 }
 
 static void zap_stdio(void)
@@ -408,7 +492,10 @@ static void service_stop_or_reset(struct service *svc, int how)
 
     if (svc->pid) {
         NOTICE("service '%s' is being killed\n", svc->name);
-        kill(-svc->pid, SIGKILL);
+		if (!strcmp(svc->name, "mux") || !strcmp(svc->name, "pppd-gprs") || !strcmp(svc->name, "ril-daemon")|| !strcmp(svc->name, "pppoe"))
+			kill(-svc->pid, SIGTERM); 
+		else
+			kill(-svc->pid, SIGKILL);
         notify_service_state(svc->name, "stopping");
     } else {
         notify_service_state(svc->name, "stopped");
@@ -454,6 +541,28 @@ static void restart_processes()
                            restart_service_if_needed);
 }
 
+
+static int device_power(int on,char * device)
+{
+	int ret;
+	int gpio;
+	char buf[50]={0};
+	int  len = sizeof(buf);
+
+	ret = wmt_getsyspara(device, buf, &len);
+	if (ret) {
+		return -1;
+    } else {
+    	sscanf(buf,"%d",&gpio);		
+		if (wmt_gpio_set(gpio,1,on)) {
+			ERROR("set gpio error");
+			return -1;
+		}
+
+		return 0;
+	}
+}
+
 static void msg_start(const char *name)
 {
     struct service *svc;
@@ -470,12 +579,18 @@ static void msg_start(const char *name)
 
         svc = service_find_by_name(tmp);
     }
-
+    if(!strcmp(name,"ethled")||!strcmp(name,"wifiled")||!strcmp(name,"netled")){
+		char device[32];
+		sprintf(device,"wmt.gpo.%s",name);
+		device_power(1,device);
+		goto out;
+    }
     if (svc) {
         service_start(svc, args);
     } else {
         ERROR("no such service '%s'\n", name);
     }
+out:
     if (tmp)
         free(tmp);
 }
@@ -483,6 +598,12 @@ static void msg_start(const char *name)
 static void msg_stop(const char *name)
 {
     struct service *svc = service_find_by_name(name);
+    if(!strcmp(name,"ethled")||!strcmp(name,"wifiled")||!strcmp(name,"netled")){
+		char device[32];
+		sprintf(device,"wmt.gpo.%s",name);		
+		device_power(0,device);
+		return;
+    }
 
     if (svc) {
         service_stop(svc);
@@ -648,6 +769,14 @@ static void import_kernel_nv(char *name, int for_emulator)
         if (cnt < PROP_NAME_MAX)
             property_set(prop, value);
     }
+    //check root=/dev/nfs
+    else if( !strncmp(name, "root", 4)) {
+        if( !strncmp(value, "/dev/nfs", 8)) {
+            property_set("ro.root.dev", "nfs");
+            //only ERROR can print below message.
+            ERROR("setprop ro.root.dev nfs for %s:%s\n", name, value);
+        }
+    }
 }
 
 static void export_kernel_boot_props(void)
@@ -687,6 +816,7 @@ static void export_kernel_boot_props(void)
 
     snprintf(tmp, PROP_VALUE_MAX, "%d", revision);
     property_set("ro.revision", tmp);
+    property_set("ro.ubifs",ubifs_enabled ? "1" : "0");
 
     /* TODO: these are obsolete. We should delete them */
     if (!strcmp(bootmode,"factory"))
@@ -771,6 +901,33 @@ static int bootchart_init_action(int nargs, char **args)
     return 0;
 }
 #endif
+int process_vendor_config_file(void)
+{
+    int retval = -1;
+    char buf[50] = {0};
+    int varlen = sizeof(buf);
+    char file_path[50] = {0};
+    char *tmp,*token;
+    char value[50];
+    int ret=-1;
+
+    ERROR("process_vendor_config_file\n");
+
+    mkdir("/dev/mtd",0755);
+    mknod("/dev/mtd/mtd0", S_IFCHR | 0600, 90<<8 | 0);
+    retval = wmt_getsyspara("wmt.init.rc", buf, &varlen);
+    if(!retval) {
+        tmp = buf;
+        ERROR("wmt.init.rc:%s\n",buf);
+        snprintf(file_path, sizeof(file_path), "/%s", buf);//init.mtk6620.rc
+        ERROR("------>process init.rc file:%s\n",file_path);
+        if(init_parse_config_file(file_path)<0)
+        	return 0;
+    }else {
+        ERROR("have not set env variant:wmt.init.rc:%s",buf);
+    }
+    return 0;
+}
 
 #ifdef HAVE_SELINUX
 static const struct selinux_opt seopts_prop[] = {
@@ -922,6 +1079,7 @@ int main(int argc, char **argv)
     INFO("reading config file\n");
     init_parse_config_file("/init.rc");
 
+    process_vendor_config_file();//added by rubbit
     action_for_each_trigger("early-init", action_add_queue_tail);
 
     queue_builtin_action(wait_for_coldboot_done_action, "wait_for_coldboot_done");
@@ -936,6 +1094,7 @@ int main(int argc, char **argv)
         action_for_each_trigger("early-fs", action_add_queue_tail);
         action_for_each_trigger("fs", action_add_queue_tail);
         action_for_each_trigger("post-fs", action_add_queue_tail);
+        action_for_each_trigger("ubi-fs", action_add_queue_tail);
         action_for_each_trigger("post-fs-data", action_add_queue_tail);
     }
 

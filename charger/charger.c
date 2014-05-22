@@ -41,10 +41,6 @@
 #include <cutils/misc.h>
 #include <cutils/uevent.h>
 
-#ifdef CHARGER_ENABLE_SUSPEND
-#include <suspend/autosuspend.h>
-#endif
-
 #include "minui/minui.h"
 
 #ifndef max
@@ -140,33 +136,33 @@ struct uevent {
 
 static struct frame batt_anim_frames[] = {
     {
-        .name = "charger/battery_0",
+        .name = "/system/wmtapp/chargerimages/battery_0",
         .disp_time = 750,
         .min_capacity = 0,
     },
     {
-        .name = "charger/battery_1",
+        .name = "/system/wmtapp/chargerimages/battery_1",
         .disp_time = 750,
         .min_capacity = 20,
     },
     {
-        .name = "charger/battery_2",
+        .name = "/system/wmtapp/chargerimages/battery_2",
         .disp_time = 750,
         .min_capacity = 40,
     },
     {
-        .name = "charger/battery_3",
+        .name = "/system/wmtapp/chargerimages/battery_3",
         .disp_time = 750,
         .min_capacity = 60,
     },
     {
-        .name = "charger/battery_4",
+        .name = "/system/wmtapp/chargerimages/battery_4",
         .disp_time = 750,
         .min_capacity = 80,
         .level_only = true,
     },
     {
-        .name = "charger/battery_5",
+        .name = "/system/wmtapp/chargerimages/battery_5",
         .disp_time = 750,
         .min_capacity = BATTERY_FULL_THRESH,
     },
@@ -175,7 +171,7 @@ static struct frame batt_anim_frames[] = {
 static struct animation battery_animation = {
     .frames = batt_anim_frames,
     .num_frames = ARRAY_SIZE(batt_anim_frames),
-    .num_cycles = 3,
+    .num_cycles = 10,
 };
 
 static struct charger charger_state = {
@@ -244,6 +240,53 @@ out:
     LOGI("\n");
     LOGI("************* END LAST KMSG *************\n");
     LOGI("\n");
+}
+
+static int read_int(char const* path, int * value)
+{
+    int fd = open(path, O_RDWR);
+    if (fd >= 0) {
+        char buffer[20] = {0};
+        read(fd, buffer, 19);
+        close(fd);
+        *value = atoi(buffer);
+        return 0;
+    } else {
+        LOGE("Can't read %s: %s", path, strerror(errno));
+        *value = 100;
+        return -errno;
+    }
+}
+
+static int write_int(char const* path, int value)
+{
+    int fd;
+    static int already_warned = 0;
+
+    fd = open(path, O_RDWR);
+    if (fd >= 0) {
+        char buffer[20];
+        int bytes = sprintf(buffer, "%d\n", value);
+        int amt = write(fd, buffer, bytes);
+        close(fd);
+        return amt == -1 ? -errno : 0;
+    } else {
+        if (already_warned == 0) {
+            LOGE("write_int failed to open %s\n", path);
+            already_warned = 1;
+        }
+        return -errno;
+    }
+}
+
+void lcd_fb_blank(bool blank)
+{
+	int err;
+	if (blank == true)
+		err = write_int("/sys/class/backlight/pwm-backlight.0/brightness", 0);
+	else
+		err = write_int("/sys/class/backlight/pwm-backlight.0/brightness", 255);
+	gr_fb_blank(blank);
 }
 
 static int read_file(const char *path, char *buf, size_t sz)
@@ -355,21 +398,6 @@ static void remove_supply(struct charger *charger, struct power_supply *supply)
     charger->num_supplies--;
     free(supply);
 }
-
-#ifdef CHARGER_ENABLE_SUSPEND
-static int request_suspend(bool enable)
-{
-    if (enable)
-        return autosuspend_enable();
-    else
-        return autosuspend_disable();
-}
-#else
-static int request_suspend(bool enable)
-{
-    return 0;
-}
-#endif
 
 static void parse_uevent(const char *msg, struct uevent *uevent)
 {
@@ -702,10 +730,8 @@ static void update_screen_state(struct charger *charger, int64_t now)
     if (batt_anim->cur_cycle == batt_anim->num_cycles) {
         reset_animation(batt_anim);
         charger->next_screen_transition = -1;
-        gr_fb_blank(true);
+        lcd_fb_blank(true);
         LOGV("[%lld] animation done\n", now);
-        if (charger->num_supplies_online > 0)
-            request_suspend(true);
         return;
     }
 
@@ -737,7 +763,7 @@ static void update_screen_state(struct charger *charger, int64_t now)
 
     /* unblank the screen  on first cycle */
     if (batt_anim->cur_cycle == 0)
-        gr_fb_blank(false);
+        lcd_fb_blank(false);
 
     /* draw the new frame (@ cur_frame) */
     redraw_screen(charger);
@@ -845,10 +871,8 @@ static void process_key(struct charger *charger, int code, int64_t now)
             }
         } else {
             /* if the power key got released, force screen state cycle */
-            if (key->pending) {
-                request_suspend(false);
+            if (key->pending)
                 kick_animation(charger->batt_anim);
-            }
         }
     }
 
@@ -866,7 +890,6 @@ static void handle_input_state(struct charger *charger, int64_t now)
 static void handle_power_supply_state(struct charger *charger, int64_t now)
 {
     if (charger->num_supplies_online == 0) {
-        request_suspend(false);
         if (charger->next_pwr_check == -1) {
             charger->next_pwr_check = now + UNPLUGGED_SHUTDOWN_TIME;
             LOGI("[%lld] device unplugged: shutting down in %lld (@ %lld)\n",
@@ -978,7 +1001,7 @@ int main(int argc, char **argv)
     charger->uevent_fd = fd;
     coldboot(charger, "/sys/class/power_supply", "add");
 
-    ret = res_create_surface("charger/battery_fail", &charger->surf_unknown);
+    ret = res_create_surface_by_path("/system/wmtapp/chargerimages/battery_fail", &charger->surf_unknown);
     if (ret < 0) {
         LOGE("Cannot load image\n");
         charger->surf_unknown = NULL;
@@ -987,7 +1010,7 @@ int main(int argc, char **argv)
     for (i = 0; i < charger->batt_anim->num_frames; i++) {
         struct frame *frame = &charger->batt_anim->frames[i];
 
-        ret = res_create_surface(frame->name, &frame->surface);
+        ret = res_create_surface_by_path(frame->name, &frame->surface);
         if (ret < 0) {
             LOGE("Cannot load image %s\n", frame->name);
             /* TODO: free the already allocated surfaces... */
@@ -1000,7 +1023,7 @@ int main(int argc, char **argv)
     ev_sync_key_state(set_key_callback, charger);
 
 #ifndef CHARGER_DISABLE_INIT_BLANK
-    gr_fb_blank(true);
+    lcd_fb_blank(true);
 #endif
 
     charger->next_screen_transition = now - 1;

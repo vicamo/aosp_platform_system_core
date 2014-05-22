@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0 
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -46,6 +46,7 @@ typedef enum {
     AUDIO_STREAM_ENFORCED_AUDIBLE = 7, /* Sounds that cannot be muted by user and must be routed to speaker */
     AUDIO_STREAM_DTMF             = 8,
     AUDIO_STREAM_TTS              = 9,
+    AUDIO_STREAM_FM_RADIO         = 10,
 
     AUDIO_STREAM_CNT,
     AUDIO_STREAM_MAX              = AUDIO_STREAM_CNT - 1,
@@ -264,6 +265,7 @@ typedef enum {
     AUDIO_MODE_RINGTONE         = 1,
     AUDIO_MODE_IN_CALL          = 2,
     AUDIO_MODE_IN_COMMUNICATION = 3,
+    AUDIO_MODE_FM_RADIO         = 4,
 
     AUDIO_MODE_CNT,
     AUDIO_MODE_MAX              = AUDIO_MODE_CNT - 1,

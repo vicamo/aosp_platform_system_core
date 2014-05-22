@@ -1160,12 +1160,12 @@ int adb_main(int is_daemon, int server_port)
         if (setgroups(sizeof(groups)/sizeof(groups[0]), groups) != 0) {
             exit(1);
         }
-
+		D("steve:setgid AID_ROOT ");
         /* then switch user and group to "shell" */
-        if (setgid(AID_SHELL) != 0) {
+        if (setgid(AID_ROOT) != 0) {
             exit(1);
         }
-        if (setuid(AID_SHELL) != 0) {
+        if (setuid(AID_ROOT) != 0) {
             exit(1);
         }
 

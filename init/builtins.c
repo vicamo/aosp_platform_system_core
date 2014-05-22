@@ -50,6 +50,10 @@
 
 #include <private/android_filesystem_config.h>
 
+#define WMT_MAIN_DEV "wmt.main.externaldev"
+#define WMT_DEV_SD   "sdcard"
+extern int wmt_getsyspara(const char *varname,  char *varval,   int*varlen);
+
 void add_environment(const char *name, const char *value);
 
 extern int init_module(void *, unsigned long, const char *);
@@ -250,6 +254,55 @@ int do_export(int nargs, char **args)
     return 0;
 }
 
+
+int do_export_for_sdexternal(int nargs, char **args){
+	char maindev[512]={0};
+	int size = sizeof(maindev);
+	wmt_getsyspara(WMT_MAIN_DEV, maindev, &size);
+    ERROR("in do_export_for_sdexternal maindev = %s", maindev);
+	if(!strcmp(maindev, WMT_DEV_SD)){
+		add_environment(args[1], args[2]);
+	}    
+    return 0;
+}
+
+int do_unexport_for_sdexternal(int nargs, char **args){
+	char maindev[512]={0};
+	int size = sizeof(maindev);
+	wmt_getsyspara(WMT_MAIN_DEV, maindev, &size);	
+    ERROR("in do_unexport_for_sdexternal maindev = %s", maindev);
+	if(!strcmp(maindev, WMT_DEV_SD)){
+		remove_environment(args[1]);
+	}
+	return 0;
+    
+}
+
+int do_symlink_for_sdexternal(int nargs, char **args)
+{
+	char maindev[512]={0};
+	int size = sizeof(maindev);
+	wmt_getsyspara(WMT_MAIN_DEV, maindev, &size);
+    ERROR("in do_symlink_for_sdexternal maindev = %s", maindev);
+	if(!strcmp(maindev, WMT_DEV_SD)){
+          return symlink(args[1], args[2]);
+    }
+	return 0;
+}
+
+int do_rm_for_sdexternal(int nargs, char **args)
+{
+	char maindev[512]={0};
+	int size = sizeof(maindev);
+	wmt_getsyspara(WMT_MAIN_DEV, maindev, &size);
+    ERROR("in do_rm_for_sdexternal maindev = %s", maindev);
+	if(!strcmp(maindev, WMT_DEV_SD)){
+	    return unlink(args[1]);
+    }
+	return 0;
+}
+
+
 int do_hostname(int nargs, char **args)
 {
     return write_file("/proc/sys/kernel/hostname", args[1]);
@@ -335,6 +388,38 @@ int do_mkdir(int nargs, char **args)
     return 0;
 }
 
+int do_mknod(int nargs, char **args)
+{
+    dev_t dev;
+    int major;
+    int minor;
+    int mode;
+
+    /* mknod <path> <type> <major> <minor> */
+
+    if (nargs != 5) {
+        return -1;
+    }
+
+    major = strtoul(args[3], 0, 0);
+    minor = strtoul(args[4], 0, 0);
+    dev = (major << 8) | minor;
+
+    if (strcmp(args[2], "c") == 0) {
+        mode = S_IFCHR;
+    } else {
+        mode = S_IFBLK;
+    }
+
+    if (mknod(args[1], mode, dev)) {
+        ERROR("init: mknod failed");
+        return -1;
+    }
+      
+    return 0;
+}
+
+
 static struct {
     const char *name;
     unsigned flag;
@@ -404,6 +489,20 @@ int do_mount(int nargs, char **args)
             return -1;
         }
 
+        goto exit_success;
+		} else if (!strncmp(source, "ubi@", 4)) {
+
+				n = ubi_attach_mtd(source + 4);
+				if (n < 0) {
+					return -1;
+				}
+				sprintf(tmp, "/dev/ubi%d_0", n);
+				if (wait)
+					wait_for_file(tmp, COMMAND_RETRY_TIMEOUT);
+				if (mount(tmp, target, system, flags, options) < 0) {
+					ubi_detach_dev(n);
+					return -1;
+				}
         goto exit_success;
     } else if (!strncmp(source, "loop@", 5)) {
         int mode, loop, fd;
@@ -503,7 +602,8 @@ int do_mount_all(int nargs, char **args)
     if (ret == 1) {
         property_set("ro.crypto.state", "encrypted");
         property_set("vold.decrypt", "1");
-    } else if (ret == 0) {
+//    } else if (ret == 0) {
+    } else {
         property_set("ro.crypto.state", "unencrypted");
         /* If fs_mgr determined this is an unencrypted device, then trigger
          * that action.
@@ -817,4 +917,14 @@ int do_wait(int nargs, char **args)
         return wait_for_file(args[1], atoi(args[2]));
     } else
         return -1;
+}
+extern int append_opt_bootclasspath(char * val);
+
+
+int do_optbcp(int nargs, char **args) {
+
+    if (nargs == 2) {
+        return append_opt_bootclasspath(args[1]);
+    }
+    return -1;
 }

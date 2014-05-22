@@ -100,6 +100,7 @@ int lookup_keyword(const char *s)
     case 'e':
         if (!strcmp(s, "xec")) return K_exec;
         if (!strcmp(s, "xport")) return K_export;
+		if (!strcmp(s, "xport_for_sdexternal")) return K_export_for_sdexternal;
         break;
     case 'g':
         if (!strcmp(s, "roup")) return K_group;
@@ -124,17 +125,20 @@ int lookup_keyword(const char *s)
         if (!strcmp(s, "kdir")) return K_mkdir;
         if (!strcmp(s, "ount_all")) return K_mount_all;
         if (!strcmp(s, "ount")) return K_mount;
+        if (!strcmp(s, "knod")) return K_mknod;
         break;
     case 'o':
         if (!strcmp(s, "n")) return K_on;
         if (!strcmp(s, "neshot")) return K_oneshot;
         if (!strcmp(s, "nrestart")) return K_onrestart;
+        if (!strcmp(s, "ptbcp")) return K_optbcp;
         break;
     case 'r':
         if (!strcmp(s, "estart")) return K_restart;
         if (!strcmp(s, "estorecon")) return K_restorecon;
         if (!strcmp(s, "mdir")) return K_rmdir;
         if (!strcmp(s, "m")) return K_rm;
+		if (!strcmp(s, "m_for_sdexternal")) return K_rm_for_sdexternal;
         break;
     case 's':
         if (!strcmp(s, "eclabel")) return K_seclabel;
@@ -151,12 +155,14 @@ int lookup_keyword(const char *s)
         if (!strcmp(s, "top")) return K_stop;
         if (!strcmp(s, "ymlink")) return K_symlink;
         if (!strcmp(s, "ysclktz")) return K_sysclktz;
+		if (!strcmp(s, "ymlink_for_sdexternal")) return K_symlink_for_sdexternal;
         break;
     case 't':
         if (!strcmp(s, "rigger")) return K_trigger;
         break;
     case 'u':
         if (!strcmp(s, "ser")) return K_user;
+		if (!strcmp(s, "nexport_for_sdexternal")) return K_unexport_for_sdexternal;
         break;
     case 'w':
         if (!strcmp(s, "rite")) return K_write;

@@ -316,6 +316,10 @@ static int create_subprocess(const char *cmd, const char *arg0, const char *arg1
         } else {
            D("adb: unable to open %s\n", text);
         }
+
+        //added by vincent: adb should use command in system/ first, then busybox
+        setenv("PATH", "/system/bin:/system/sbin:/system/xbin:/vendor/bin:/bin:/sbin:/usr/bin:/usr/sbin", 1);
+
         execl(cmd, cmd, arg0, arg1, NULL);
         fprintf(stderr, "- exec '%s' failed: %s (%d) -\n",
                 cmd, strerror(errno), errno);
