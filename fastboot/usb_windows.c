@@ -39,21 +39,10 @@
 #if TRACE_USB
 #define DBG(x...) fprintf(stderr, x)
 #else
-#define DBG(x...) //output(x)
+#define DBG(x...)
 #endif
 
-void output(const char *fmt, ...){
-    char buf[256];
-    char *s;
-    va_list ap;
-
-    va_start(ap, fmt);
-    vsprintf(buf, fmt, ap);
-    va_end(ap);
-    OutputDebugString(buf);
-}
-
-#define MAX_USBFS_BULK_SIZE (16 * 1024)
+#define MAX_USBFS_BULK_SIZE (1024 * 1024)
 
 /** Structure usb_handle describes our connection to the usb device via
   AdbWinApi.dll. This structure is returned from usb_open() routine and
@@ -71,8 +60,6 @@ struct usb_handle {
 
     /// Interface name
     char*         interface_name;
-
-	HANDLE        hExitEvent;
 };
 
 /// Class ID assigned to the device by androidusb.sys
@@ -80,7 +67,7 @@ static const GUID usb_class_id = ANDROID_USB_CLASS_ID;
 
 
 /// Checks if interface (device) matches certain criteria
-int recognized_device(usb_handle* handle, ifc_match_func callback, const char *serial);
+int recognized_device(usb_handle* handle, ifc_match_func callback);
 
 /// Opens usb interface (device) by interface (device) name.
 usb_handle* do_usb_open(const wchar_t* interface_name);
@@ -106,7 +93,7 @@ usb_handle* do_usb_open(const wchar_t* interface_name) {
     usb_handle* ret = (usb_handle*)malloc(sizeof(usb_handle));
     if (NULL == ret)
         return NULL;
-    ret->hExitEvent = NULL;
+
     // Create interface.
     ret->adb_interface = AdbCreateInterfaceByName(interface_name);
 
@@ -165,7 +152,7 @@ usb_handle* do_usb_open(const wchar_t* interface_name) {
 }
 
 int usb_write(usb_handle* handle, const void* data, int len) {
-    unsigned long time_out = 1000 + len * 8;
+    unsigned long time_out = 500 + len * 8;
     unsigned long written = 0;
     unsigned count = 0;
     int ret;
@@ -181,21 +168,13 @@ int usb_write(usb_handle* handle, const void* data, int len) {
                                    &written,
                                    time_out);
             errno = GetLastError();
-            //DBG("AdbWriteEndpointSync returned %d, errno: %d\n", ret, errno);
+            DBG("AdbWriteEndpointSync returned %d, errno: %d\n", ret, errno);
             if (ret == 0) {
                 // assume ERROR_INVALID_HANDLE indicates we are disconnected
                 if (errno == ERROR_INVALID_HANDLE)
                 usb_kick(handle);
                 return -1;
             }
-            // bool should be either be 0 or 1, however, sometimes ret will be 2147344384, and errno ERROR_INVALID_HANDLE
-            // 
-			else if (ret != 1){
-				printf("Strange! AdbWriteEndpointSync returned %d, errno: %d\n", ret, errno);
-                if (errno == ERROR_INVALID_HANDLE)
-                usb_kick(handle);
-                return -1;				
-			}
 
             count += written;
             len -= written;
@@ -214,12 +193,10 @@ int usb_write(usb_handle* handle, const void* data, int len) {
     return -1;
 }
 
-#define MAX_RETRY 200
 int usb_read(usb_handle *handle, void* data, int len) {
-    unsigned long time_out = 1000 + len * 8;
+    unsigned long time_out = 500 + len * 8;
     unsigned long read = 0;
     int ret;
-	int retry=0;
 
     DBG("usb_read %d\n", len);
     if (NULL != handle) {
@@ -232,8 +209,8 @@ int usb_read(usb_handle *handle, void* data, int len) {
 	                              &read,
 	                              time_out);
             errno = GetLastError();
-            //DBG("usb_read got: %ld, expected: %d, errno: %d\n", read, xfer, errno);
-			if (ret) {
+            DBG("usb_read got: %ld, expected: %d, errno: %d\n", read, xfer, errno);
+            if (ret) {
                 return read;
             } else if (errno != ERROR_SEM_TIMEOUT) {
                 // assume ERROR_INVALID_HANDLE indicates we are disconnected
@@ -242,18 +219,6 @@ int usb_read(usb_handle *handle, void* data, int len) {
                 break;
             }
             // else we timed out - try again
-            else if (retry++ > MAX_RETRY){
-                DBG("usb_read retry too many times: %d\n", errno);
-				//return -100; 
-			}
-			if(handle->hExitEvent)
-			{
-			  if(WAIT_OBJECT_0 == WaitForSingleObject(handle->hExitEvent, 0))
-			  {
-			     DBG("usb_read return when receive exit envet \n");
-			     return -1;
-			  }
-			}	
         }
     } else {
         DBG("usb_read NULL handle\n");
@@ -304,7 +269,7 @@ int usb_close(usb_handle* handle) {
     return 0;
 }
 
-int recognized_device(usb_handle* handle, ifc_match_func callback, const char *serial) {
+int recognized_device(usb_handle* handle, ifc_match_func callback) {
     struct usb_ifc_info info;
     USB_DEVICE_DESCRIPTOR device_desc;
     USB_INTERFACE_DESCRIPTOR interf_desc;
@@ -348,14 +313,14 @@ int recognized_device(usb_handle* handle, ifc_match_func callback, const char *s
 
     info.device_path[0] = 0;
 
-    if (callback(&info, serial) == 0) {
+    if (callback(&info) == 0) {
         return 1;
     }
 
     return 0;
 }
 
-static usb_handle *find_usb_device(ifc_match_func callback, const char * serial) {
+static usb_handle *find_usb_device(ifc_match_func callback) {
 	usb_handle* handle = NULL;
     char entry_buffer[2048];
     char interf_name[2048];
@@ -385,7 +350,7 @@ static usb_handle *find_usb_device(ifc_match_func callback, const char * serial)
         handle = do_usb_open(next_interface->device_name);
         if (NULL != handle) {
             // Lets see if this interface (device) belongs to us
-            if (recognized_device(handle, callback, serial)) {
+            if (recognized_device(handle, callback)) {
                 // found it!
                 break;
             } else {
@@ -402,9 +367,9 @@ static usb_handle *find_usb_device(ifc_match_func callback, const char * serial)
     return handle;
 }
 
-usb_handle *usb_open(ifc_match_func callback, const char * serial)
+usb_handle *usb_open(ifc_match_func callback)
 {
-    return find_usb_device(callback, serial);
+    return find_usb_device(callback);
 }
 
 // called from fastboot.c

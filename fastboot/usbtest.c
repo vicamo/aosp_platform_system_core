@@ -59,7 +59,7 @@ int printifc(usb_ifc_info *info)
     return -1;
 }
 
-int match_null(usb_ifc_info *info, const char *serial)
+int match_null(usb_ifc_info *info)
 {
     if(info->dev_vendor != 0x18d1) return -1;
     if(info->ifc_class != 0xff) return -1;
@@ -68,7 +68,7 @@ int match_null(usb_ifc_info *info, const char *serial)
     return 0;
 }
 
-int match_zero(usb_ifc_info *info, const char *serial)
+int match_zero(usb_ifc_info *info)
 {
     if(info->dev_vendor != 0x18d1) return -1;
     if(info->ifc_class != 0xff) return -1;
@@ -77,7 +77,7 @@ int match_zero(usb_ifc_info *info, const char *serial)
     return 0;
 }
 
-int match_loop(usb_ifc_info *info, const char *serial)
+int match_loop(usb_ifc_info *info)
 {
     if(info->dev_vendor != 0x18d1) return -1;
     if(info->ifc_class != 0xff) return -1;
@@ -190,7 +190,7 @@ int main(int argc, char **argv)
 
     for(i = 0; tests[i].cmd; i++) {
         if(!strcmp(argv[1], tests[i].cmd)) {
-            usb = usb_open(tests[i].match, NULL);
+            usb = usb_open(tests[i].match);
             if(tests[i].test) {
                 if(usb == 0) {
                     fprintf(stderr,"usbtest: %s: could not find interface\n",

@@ -64,7 +64,7 @@ struct usb_handle
 
 /** Try out all the interfaces and see if there's a match. Returns 0 on
  * success, -1 on failure. */
-static int try_interfaces(IOUSBDeviceInterface182 **dev, usb_handle *handle, const char *serial) {
+static int try_interfaces(IOUSBDeviceInterface182 **dev, usb_handle *handle) {
     IOReturn kr;
     IOUSBFindInterfaceRequest request;
     io_iterator_t iterator;
@@ -217,7 +217,7 @@ static int try_interfaces(IOUSBDeviceInterface182 **dev, usb_handle *handle, con
             }
         }
 
-        if (handle->callback(&handle->info, serial) == 0) {
+        if (handle->callback(&handle->info) == 0) {
             handle->interface = interface;
             handle->success = 1;
 
@@ -257,7 +257,7 @@ next_interface:
 /** Try out the given device and see if there's a match. Returns 0 on
  * success, -1 on failure.
  */
-static int try_device(io_service_t device, usb_handle *handle, const char * serial) {
+static int try_device(io_service_t device, usb_handle *handle) {
     kern_return_t kr;
     IOCFPlugInInterface **plugin = NULL;
     IOUSBDeviceInterface182 **dev = NULL;
@@ -360,7 +360,7 @@ static int try_device(io_service_t device, usb_handle *handle, const char * seri
     }
     handle->info.writable = 1;
 
-    if (try_interfaces(dev, handle, serial)) {
+    if (try_interfaces(dev, handle)) {
         goto error;
     }
 
@@ -378,7 +378,7 @@ static int try_device(io_service_t device, usb_handle *handle, const char * seri
 
 
 /** Initializes the USB system. Returns 0 on success, -1 on error. */
-static int init_usb(ifc_match_func callback, const char* serial, usb_handle **handle) {
+static int init_usb(ifc_match_func callback, usb_handle **handle) {
     int ret = -1;
     CFMutableDictionaryRef matchingDict;
     kern_return_t result;
@@ -424,7 +424,7 @@ static int init_usb(ifc_match_func callback, const char* serial, usb_handle **ha
             break;
         }
 
-        if (try_device(device, &h, serial) != 0) {
+        if (try_device(device, &h) != 0) {
             IOObjectRelease(device);
             ret = -1;
             break;
@@ -451,10 +451,10 @@ static int init_usb(ifc_match_func callback, const char* serial, usb_handle **ha
  * Definitions of this file's public functions.
  */
 
-usb_handle *usb_open(ifc_match_func callback, const char* serial) {
+usb_handle *usb_open(ifc_match_func callback) {
     usb_handle *handle = NULL;
 
-    if (init_usb(callback, serial, &handle) < 0) {
+    if (init_usb(callback, &handle) < 0) {
         /* Something went wrong initializing USB. */
         return NULL;
     }

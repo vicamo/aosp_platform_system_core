@@ -18,8 +18,8 @@ include $(CLEAR_VARS)
 
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/../mkbootimg \
   $(LOCAL_PATH)/../../extras/ext4_utils
-LOCAL_SRC_FILES := protocol.c engine.c bootimg.c fastboot.c wmtupdater.c
-LOCAL_MODULE := libfastboot
+LOCAL_SRC_FILES := protocol.c engine.c bootimg.c fastboot.c
+LOCAL_MODULE := fastboot
 
 ifeq ($(HOST_OS),linux)
   LOCAL_SRC_FILES += usb_linux.c util_linux.c
@@ -62,26 +62,8 @@ LOCAL_STATIC_LIBRARIES += libselinux
 endif # HAVE_SELINUX
 endif # HOST_OS != windows
 
-include ${BUILD_HOST_SHARED_LIBRARY}
-
-include $(CLEAR_VARS)
-LOCAL_MODULE := fastboot
-LOCAL_SRC_FILES := main.c
-LOCAL_SHARED_LIBRARIES := libfastboot
-
 include $(BUILD_HOST_EXECUTABLE)
 
-ifneq ($(strip $(USE_MINGW)),)
-
-include $(CLEAR_VARS)
-LOCAL_MODULE := wmtupdater
-LOCAL_SRC_FILES := wmtupdater_main.c
-LOCAL_SHARED_LIBRARIES := libfastboot libconvyaffs2img
-LOCAL_C_INCLUDES += external/yaffs2/yaffs2/utils/
-
-include $(BUILD_HOST_EXECUTABLE)
-
-endif
 
 $(call dist-for-goals,dist_files sdk,$(LOCAL_BUILT_MODULE))
 

@@ -39,9 +39,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-
 #ifdef USE_MINGW
-#include <windows.h>
 #include <fcntl.h>
 #else
 #include <sys/mman.h>
@@ -57,18 +55,6 @@ double now()
     gettimeofday(&tv, NULL);
     return (double)tv.tv_sec + (double)tv.tv_usec / 1000000;
 }
-
-static void outputDebugStr(const char *fmt, ...){
-#ifdef USE_MINGW
-     char buf[1024]={0};
-     va_list ap;
-	 va_start(ap, fmt);
-	 vsprintf(buf, fmt, ap);
-	 va_end(ap);
-	 OutputDebugString(buf);
-#endif
-}
-
 
 char *mkmsg(const char *fmt, ...)
 {
@@ -94,7 +80,7 @@ char *mkmsg(const char *fmt, ...)
 
 typedef struct Action Action;
 
-#define CMD_SIZE FB_COMMAND_SZ
+#define CMD_SIZE 64
 
 struct Action
 {
@@ -106,28 +92,15 @@ struct Action
     void *data;
     unsigned size;
 
-    char *msg;
+    const char *msg;
     int (*func)(Action *a, int status, char *resp);
 
     double start;
 };
 
-struct fb_action_list{
-   Action *action_list;
-   Action *action_last;
-};
+static Action *action_list = 0;
+static Action *action_last = 0;
 
-fb_action_list * init_fb_action_list(){
-   fb_action_list * list =(fb_action_list *)malloc(sizeof(fb_action_list));
-   if(list == NULL) return NULL;
-   list->action_list = 0;
-   list->action_last = 0;
-   return list;
-}
-
-void uninit_fb_action_list(fb_action_list * list){
-   if(list != NULL) free(list);
-}
 
 struct image_data {
     long long partition_size;
@@ -138,7 +111,7 @@ struct image_data {
 void generate_ext4_image(struct image_data *image);
 void cleanup_image(struct image_data *image);
 
-int fb_getvar(struct usb_handle *usb, char *response, char *errBuf, int errBufLen, const char *fmt, ...)
+int fb_getvar(struct usb_handle *usb, char *response, const char *fmt, ...)
 {
     char cmd[CMD_SIZE] = "getvar:";
     int getvar_len = strlen(cmd);
@@ -149,7 +122,7 @@ int fb_getvar(struct usb_handle *usb, char *response, char *errBuf, int errBufLe
     vsnprintf(cmd + getvar_len, sizeof(cmd) - getvar_len, fmt, args);
     va_end(args);
     cmd[CMD_SIZE - 1] = '\0';
-    return fb_command_response(usb, cmd, response, errBuf, errBufLen);
+    return fb_command_response(usb, cmd, response);
 }
 
 struct generator {
@@ -178,14 +151,14 @@ struct generator {
  * Not all devices report the filesystem type, so don't report any errors,
  * just return false.
  */
-int fb_format_supported(usb_handle *usb, const char *partition, char *errBuf, int errBufLen)
+int fb_format_supported(usb_handle *usb, const char *partition)
 {
     char response[FB_RESPONSE_SZ+1];
     struct generator *generator = NULL;
     int status;
     unsigned int i;
 
-    status = fb_getvar(usb, response, errBuf, errBufLen, "partition-type:%s", partition);
+    status = fb_getvar(usb, response, "partition-type:%s", partition);
     if (status) {
         return 0;
     }
@@ -206,21 +179,17 @@ int fb_format_supported(usb_handle *usb, const char *partition, char *errBuf, in
 
 static int cb_default(Action *a, int status, char *resp)
 {
-    
-	if (status) {
+    if (status) {
         fprintf(stderr,"FAILED (%s)\n", resp);
-		outputDebugStr("FAILED (%s)\n", resp);
     } else {
         double split = now();
         fprintf(stderr,"OKAY [%7.3fs]\n", (split - a->start));
-		outputDebugStr("OKAY [%7.3fs]\n", (split - a->start));
         a->start = split;
     }
-	
     return status;
 }
 
-static Action *queue_action(fb_action_list *list, unsigned op, const char *fmt, ...)
+static Action *queue_action(unsigned op, const char *fmt, ...)
 {
     Action *a;
     va_list ap;
@@ -238,12 +207,12 @@ static Action *queue_action(fb_action_list *list, unsigned op, const char *fmt, 
         die("Command length (%d) exceeds maximum size (%d)", cmdsize, sizeof(a->cmd));
     }
 
-    if (list->action_last) {
-        list->action_last->next = a;
+    if (action_last) {
+        action_last->next = a;
     } else {
-        list->action_list = a;
+        action_list = a;
     }
-    list->action_last = a;
+    action_last = a;
     a->op = op;
     a->func = cb_default;
 
@@ -252,10 +221,10 @@ static Action *queue_action(fb_action_list *list, unsigned op, const char *fmt, 
     return a;
 }
 
-void fb_queue_erase(fb_action_list *list, const char *ptn)
+void fb_queue_erase(const char *ptn)
 {
     Action *a;
-    a = queue_action(list, OP_COMMAND, "erase:%s", ptn);
+    a = queue_action(OP_COMMAND, "erase:%s", ptn);
     a->msg = mkmsg("erasing '%s'", ptn);
 }
 
@@ -345,7 +314,7 @@ void generate_ext4_image(struct image_data *image)
     close(fd);
 }
 
-int fb_format(Action *a, usb_handle *usb, int skip_if_not_supported, char *errBuf, int errBufLen)
+int fb_format(Action *a, usb_handle *usb, int skip_if_not_supported)
 {
     const char *partition = a->cmd;
     char response[FB_RESPONSE_SZ+1];
@@ -356,7 +325,7 @@ int fb_format(Action *a, usb_handle *usb, int skip_if_not_supported, char *errBu
     unsigned i;
     char cmd[CMD_SIZE];
 
-    status = fb_getvar(usb, response, errBuf, errBufLen, "partition-type:%s", partition);
+    status = fb_getvar(usb, response, "partition-type:%s", partition);
     if (status) {
         if (skip_if_not_supported) {
             fprintf(stderr,
@@ -365,7 +334,7 @@ int fb_format(Action *a, usb_handle *usb, int skip_if_not_supported, char *errBu
                     "Can't determine partition type.\n");
             return 0;
         }
-        fprintf(stderr,"FAILED (%s)\n", errBuf);
+        fprintf(stderr,"FAILED (%s)\n", fb_get_error());
         return status;
     }
 
@@ -388,7 +357,7 @@ int fb_format(Action *a, usb_handle *usb, int skip_if_not_supported, char *errBu
         return -1;
     }
 
-    status = fb_getvar(usb, response, errBuf, errBufLen, "partition-size:%s", partition);
+    status = fb_getvar(usb, response, "partition-size:%s", partition);
     if (status) {
         if (skip_if_not_supported) {
             fprintf(stderr,
@@ -396,7 +365,7 @@ int fb_format(Action *a, usb_handle *usb, int skip_if_not_supported, char *errBu
             fprintf(stderr, "Unable to get partition size\n.");
             return 0;
         }
-        fprintf(stderr,"FAILED (%s)\n", errBuf);
+        fprintf(stderr,"FAILED (%s)\n", fb_get_error());
         return status;
     }
     image.partition_size = strtoll(response, (char **)NULL, 16);
@@ -410,12 +379,12 @@ int fb_format(Action *a, usb_handle *usb, int skip_if_not_supported, char *errBu
     // Following piece of code is similar to fb_queue_flash() but executes
     // actions directly without queuing
     fprintf(stderr, "sending '%s' (%lli KB)...\n", partition, image.image_size/1024);
-    status = fb_download_data(usb, image.buffer, image.image_size, errBuf, errBufLen);
+    status = fb_download_data(usb, image.buffer, image.image_size);
     if (status) goto cleanup;
 
     fprintf(stderr, "writing '%s'...\n", partition);
     snprintf(cmd, sizeof(cmd), "flash:%s", partition);
-    status = fb_command(usb, cmd, errBuf, errBufLen);
+    status = fb_command(usb, cmd);
     if (status) goto cleanup;
 
 cleanup:
@@ -424,38 +393,38 @@ cleanup:
     return status;
 }
 
-void fb_queue_format(fb_action_list *list, const char *partition, int skip_if_not_supported)
+void fb_queue_format(const char *partition, int skip_if_not_supported)
 {
     Action *a;
 
-    a = queue_action(list, OP_FORMAT, partition);
+    a = queue_action(OP_FORMAT, partition);
     a->data = (void*)skip_if_not_supported;
     a->msg = mkmsg("formatting '%s' partition", partition);
 }
 
-void fb_queue_flash(fb_action_list *list, const char *ptn, void *data, unsigned sz)
+void fb_queue_flash(const char *ptn, void *data, unsigned sz)
 {
     Action *a;
 
-    a = queue_action(list, OP_DOWNLOAD, "");
+    a = queue_action(OP_DOWNLOAD, "");
     a->data = data;
     a->size = sz;
     a->msg = mkmsg("sending '%s' (%d KB)", ptn, sz / 1024);
 
-    a = queue_action(list, OP_COMMAND, "flash:%s", ptn);
+    a = queue_action(OP_COMMAND, "flash:%s", ptn);
     a->msg = mkmsg("writing '%s'", ptn);
 }
 
-void fb_queue_flash_sparse(fb_action_list *list, const char *ptn, struct sparse_file *s, unsigned sz)
+void fb_queue_flash_sparse(const char *ptn, struct sparse_file *s, unsigned sz)
 {
     Action *a;
 
-    a = queue_action(list, OP_DOWNLOAD_SPARSE, "");
+    a = queue_action(OP_DOWNLOAD_SPARSE, "");
     a->data = s;
     a->size = 0;
     a->msg = mkmsg("sending sparse '%s' (%d KB)", ptn, sz / 1024);
 
-    a = queue_action(list, OP_COMMAND, "flash:%s", ptn);
+    a = queue_action(OP_COMMAND, "flash:%s", ptn);
     a->msg = mkmsg("writing '%s'", ptn);
 }
 
@@ -538,11 +507,11 @@ static int cb_reject(Action *a, int status, char *resp)
     return cb_check(a, status, resp, 1);
 }
 
-void fb_queue_require(fb_action_list *list, const char *prod, const char *var,
+void fb_queue_require(const char *prod, const char *var,
 		int invert, unsigned nvalues, const char **value)
 {
     Action *a;
-    a = queue_action(list, OP_QUERY, "getvar:%s", var);
+    a = queue_action(OP_QUERY, "getvar:%s", var);
     a->prod = prod;
     a->data = value;
     a->size = nvalues;
@@ -555,22 +524,18 @@ static int cb_display(Action *a, int status, char *resp)
 {
     if (status) {
         fprintf(stderr, "%s FAILED (%s)\n", a->cmd, resp);
-		outputDebugStr("%s FAILED (%s)\n", a->cmd, resp);
         return status;
     }
     fprintf(stderr, "%s: %s\n", (char*) a->data, resp);
-	outputDebugStr("%s: %s\n", (char*) a->data, resp);
     return 0;
 }
 
-void fb_queue_display(fb_action_list *list,const char *var, const char *prettyname)
+void fb_queue_display(const char *var, const char *prettyname)
 {
     Action *a;
-    a = queue_action(list, OP_QUERY, "getvar:%s", var);
-    //let use handle memory alloc/release
-	//a->data = strdup(prettyname);
-    a->data = (void*)prettyname; 
-	if (a->data == 0) die("out of memory");
+    a = queue_action(OP_QUERY, "getvar:%s", var);
+    a->data = strdup(prettyname);
+    if (a->data == 0) die("out of memory");
     a->func = cb_display;
 }
 
@@ -578,17 +543,16 @@ static int cb_save(Action *a, int status, char *resp)
 {
     if (status) {
         fprintf(stderr, "%s FAILED (%s)\n", a->cmd, resp);
-		outputDebugStr("%s FAILED (%s)\n", a->cmd, resp);
         return status;
     }
     strncpy(a->data, resp, a->size);
     return 0;
 }
 
-void fb_queue_getvar_save(fb_action_list *list,const char *var, char *dest, unsigned dest_size)
+void fb_queue_query_save(const char *var, char *dest, unsigned dest_size)
 {
     Action *a;
-    a = queue_action(list, OP_QUERY, "getvar:%s", var);
+    a = queue_action(OP_QUERY, "getvar:%s", var);
     a->data = (void *)dest;
     a->size = dest_size;
     a->func = cb_save;
@@ -600,139 +564,84 @@ static int cb_do_nothing(Action *a, int status, char *resp)
     return 0;
 }
 
-void fb_queue_reboot(fb_action_list *list)
+void fb_queue_reboot(void)
 {
-    Action *a = queue_action(list, OP_COMMAND, "reboot");
+    Action *a = queue_action(OP_COMMAND, "reboot");
     a->func = cb_do_nothing;
-    a->msg = strdup("rebooting");
+    a->msg = "rebooting";
 }
 
-static int cb_oem_display(Action *a, int status, char *resp)
+void fb_queue_command(const char *cmd, const char *msg)
 {
-    if (status) {
-        fprintf(stderr, "%s FAILED (%s)\n", a->cmd, resp);
-		outputDebugStr("%s FAILED (%s)\n", a->cmd, resp);
-        return status;
-    }
-    fprintf(stderr, "RESULT : %s\n", resp);
-	outputDebugStr("RESULT : %s\n", resp);
-    return 0;
+    Action *a = queue_action(OP_COMMAND, cmd);
+    a->msg = msg;
 }
 
-void fb_queue_oemdisplay(fb_action_list *list,const char *cmd, const char *msg){
-    Action *a = queue_action(list, OP_QUERY, cmd);
-    a->msg = strdup(msg);
-	a->func = cb_oem_display;
-}
-
-void fb_queue_oemsave(fb_action_list *list,const char*cmd, char *dest, unsigned dest_size){
-    Action *a = queue_action(list, OP_QUERY, cmd);
-	a->data = (void*)dest;
-	a->size = dest_size;
-	a->func = cb_save;
-}
-
-void fb_queue_command(fb_action_list *list,const char *cmd, const char *msg)
+void fb_queue_download(const char *name, void *data, unsigned size)
 {
-    Action *a = queue_action(list, OP_COMMAND, cmd);
-    a->msg = strdup(msg);
-}
-
-void fb_queue_download(fb_action_list *list,const char *name, void *data, unsigned size)
-{
-    Action *a = queue_action(list,OP_DOWNLOAD, "");
+    Action *a = queue_action(OP_DOWNLOAD, "");
     a->data = data;
     a->size = size;
     a->msg = mkmsg("downloading '%s'", name);
 }
 
-void fb_queue_notice(fb_action_list *list,const char *notice)
+void fb_queue_notice(const char *notice)
 {
-    Action *a = queue_action(list, OP_NOTICE, "");
+    Action *a = queue_action(OP_NOTICE, "");
     a->data = (void*) notice;
 }
 
-void fb_free_list(fb_action_list *list){
-    Action *a, *aa;
-
-	if(!(list->action_list)) return;
-	
-	for (a = list->action_list; a; a = a->next) {
-        //Action::msg is Engine.c allocated
-        //let user handle Action::data
-		free(a->msg);
-	}
-
-    a = list->action_list;
-	while(a){
-        aa = a;
-		a = a->next;
-		free(aa);
-	}
-
-	list->action_list = NULL;
-	list->action_last = NULL;
-}
-
-
-int fb_execute_queue(usb_handle *usb, fb_action_list *list)
+int fb_execute_queue(usb_handle *usb)
 {
     Action *a;
     char resp[FB_RESPONSE_SZ+1];
     int status = 0;
-    char errBuf[1024];
 
-    a = list->action_list;
+    a = action_list;
     if (!a)
         return status;
     resp[FB_RESPONSE_SZ] = 0;
 
-
     double start = -1;
-    for (a = list->action_list; a; a = a->next) {
+    for (a = action_list; a; a = a->next) {
         a->start = now();
-		if (start < 0) start = a->start;
+        if (start < 0) start = a->start;
         if (a->msg) {
             // fprintf(stderr,"%30s... ",a->msg);
             fprintf(stderr,"%s...\n",a->msg);
-			outputDebugStr("%s...\n",a->msg);
         }
-        memset(errBuf, 0 , sizeof(errBuf));
-		
         if (a->op == OP_DOWNLOAD) {
-            status = fb_download_data(usb, a->data, a->size, errBuf, sizeof(errBuf));
-			status = a->func(a, status, status ? errBuf : "");
+            status = fb_download_data(usb, a->data, a->size);
+            status = a->func(a, status, status ? fb_get_error() : "");
             if (status) break;
         } else if (a->op == OP_COMMAND) {
-            status = fb_command(usb, a->cmd, errBuf, sizeof(errBuf));
-			status = a->func(a, status, status ? errBuf : "");
+            status = fb_command(usb, a->cmd);
+            status = a->func(a, status, status ? fb_get_error() : "");
             if (status) break;
         } else if (a->op == OP_QUERY) {
-            status = fb_command_response(usb, a->cmd, resp, errBuf, sizeof(errBuf));
-            status = a->func(a, status, status ? errBuf : resp);
+            status = fb_command_response(usb, a->cmd, resp);
+            status = a->func(a, status, status ? fb_get_error() : resp);
             if (status) break;
         } else if (a->op == OP_NOTICE) {
             fprintf(stderr,"%s\n",(char*)a->data);
         } else if (a->op == OP_FORMAT) {
-            status = fb_format(a, usb, (int)a->data, errBuf, sizeof(errBuf));
-            status = a->func(a, status, status ? errBuf : "");
+            status = fb_format(a, usb, (int)a->data);
+            status = a->func(a, status, status ? fb_get_error() : "");
             if (status) break;
         } else if (a->op == OP_DOWNLOAD_SPARSE) {
-            status = fb_download_data_sparse(usb, a->data, errBuf, sizeof(errBuf));
-            status = a->func(a, status, status ? errBuf : "");
+            status = fb_download_data_sparse(usb, a->data);
+            status = a->func(a, status, status ? fb_get_error() : "");
             if (status) break;
         } else {
             die("bogus action");
         }
-    }	
+    }
 
-    
-    fb_free_list(list);
     fprintf(stderr,"finished. total time: %.3fs\n", (now() - start));
     return status;
 }
 
-int fb_queue_is_empty(fb_action_list *list)
+int fb_queue_is_empty(void)
 {
-    return (list->action_list == NULL);
+    return (action_list == NULL);
 }

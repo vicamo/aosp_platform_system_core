@@ -96,7 +96,7 @@ static int check(void *_desc, int len, unsigned type, int size)
 }
 
 static int filter_usb_device(int fd, char *ptr, int len, int writable,
-                             ifc_match_func callback, const char *serial,
+                             ifc_match_func callback,
                              int *ept_in_id, int *ept_out_id, int *ifc_id)
 {
     struct usb_device_descriptor *dev;
@@ -230,7 +230,7 @@ static int filter_usb_device(int fd, char *ptr, int len, int writable,
         info.has_bulk_in = (in != -1);
         info.has_bulk_out = (out != -1);
 
-        if(callback(&info, serial) == 0) {
+        if(callback(&info) == 0) {
             *ept_in_id = in;
             *ept_out_id = out;
             *ifc_id = ifc->bInterfaceNumber;
@@ -241,7 +241,7 @@ static int filter_usb_device(int fd, char *ptr, int len, int writable,
     return -1;
 }
 
-static usb_handle *find_usb_device(const char *base, ifc_match_func callback, const char *serial)
+static usb_handle *find_usb_device(const char *base, ifc_match_func callback)
 {
     usb_handle *usb = 0;
     char busname[64], devname[64];
@@ -282,7 +282,7 @@ static usb_handle *find_usb_device(const char *base, ifc_match_func callback, co
 
             n = read(fd, desc, sizeof(desc));
 
-            if(filter_usb_device(fd, desc, n, writable, callback, serial,
+            if(filter_usb_device(fd, desc, n, writable, callback,
                                  &in, &out, &ifc) == 0) {
                 usb = calloc(1, sizeof(usb_handle));
                 strcpy(usb->fname, devname);
@@ -429,7 +429,7 @@ int usb_close(usb_handle *h)
     return 0;
 }
 
-usb_handle *usb_open(ifc_match_func callback, const char *serial)
+usb_handle *usb_open(ifc_match_func callback)
 {
-    return find_usb_device("/dev/bus/usb", callback, serial);
+    return find_usb_device("/dev/bus/usb", callback);
 }
