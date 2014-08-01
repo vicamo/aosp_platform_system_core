@@ -99,7 +99,7 @@ private_my_build_target:
 	@touch $(MYPATH)/ppp.so
 	@echo "copy rootdir/system files"
 	@mkdir -p $(TARGET_ROOT_OUT)/../system
-	@cp system/core/rootdir/system/* $(TARGET_ROOT_OUT)/../system -rf
+	@cp -rf system/core/rootdir/system/* $(TARGET_ROOT_OUT)/../system
 	@find $(TARGET_ROOT_OUT)/../system -name ".svn" |xargs rm -rf
 
 include $(BUILD_MULTI_PREBUILT)
