@@ -28,7 +28,7 @@
 #include <cutils/properties.h>
 #include <stdbool.h>
 #include <inttypes.h>
-#include "loghack.h"
+#include <log/log.h>
 
 int8_t property_get_bool(const char *key, int8_t default_value) {
     if (!key) {
@@ -106,8 +106,7 @@ int32_t property_get_int32(const char *key, int32_t default_value) {
 
 #ifdef HAVE_LIBC_SYSTEM_PROPERTIES
 
-#define _REALLY_INCLUDE_SYS__SYSTEM_PROPERTIES_H_
-#include <sys/_system_properties.h>
+#include <bionic/bionic.h>
 
 int property_set(const char *key, const char *value)
 {
@@ -141,8 +140,8 @@ struct property_list_callback_data
 
 static void property_list_callback(const prop_info *pi, void *cookie)
 {
-    char name[PROP_NAME_MAX];
-    char value[PROP_VALUE_MAX];
+    char name[PROPERTY_KEY_MAX];
+    char value[PROPERTY_VALUE_MAX];
     struct property_list_callback_data *data = cookie;
 
     __system_property_read(pi, name, value);
@@ -170,6 +169,22 @@ int property_list(
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <pthread.h>
+
+#define _REALLY_INCLUDE_BIONIC_PROPERTIES_IMPL_H_
+#include <bionic/properties_impl.h>
+
+/*
+ * We have an external property server instead of built-in libc support.
+ * Used by the simulator.
+ */
+#define SYSTEM_PROPERTY_PIPE_NAME       "/tmp/android-sysprop"
+
+enum {
+    kSystemPropertyUnknown = 0,
+    kSystemPropertyGet,
+    kSystemPropertySet,
+    kSystemPropertyList
+};
 
 static pthread_once_t gInitOnce = PTHREAD_ONCE_INIT;
 static pthread_mutex_t gPropertyFdLock = PTHREAD_MUTEX_INITIALIZER;
@@ -295,7 +310,6 @@ int property_set(const char *key, const char *value)
 {
     char sendBuf[1+PROPERTY_KEY_MAX+PROPERTY_VALUE_MAX];
     char recvBuf[1];
-    int result = -1;
 
     //ALOGV("PROPERTY SET [%s]: [%s]\n", key, value);
 
@@ -384,7 +398,6 @@ int property_get(const char *key, char *value, const char *default_value)
 int property_set(const char *key, const char *value)
 {
     char ename[PROPERTY_KEY_MAX + 6];
-    char *p;
     int len;
     int r;
 

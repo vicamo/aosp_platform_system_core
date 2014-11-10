@@ -17,6 +17,7 @@
 #ifndef _LIBS_CUTILS_TRACE_H
 #define _LIBS_CUTILS_TRACE_H
 
+#include <errno.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -26,11 +27,7 @@
 #include <unistd.h>
 
 #include <cutils/compiler.h>
-#ifdef ANDROID_SMP
 #include <cutils/atomic-inline.h>
-#else
-#include <cutils/atomic.h>
-#endif
 
 __BEGIN_DECLS
 
@@ -84,7 +81,7 @@ __BEGIN_DECLS
 #error ATRACE_TAG must be defined to be one of the tags defined in cutils/trace.h
 #endif
 
-#ifdef HAVE_ANDROID_OS
+#if defined(__linux__)
 /**
  * Opens the trace file for writing and reads the property for initial tags.
  * The atrace.tags.enableflags property sets the tags to trace.
@@ -191,7 +188,7 @@ static inline void atrace_end(uint64_t tag)
 {
     if (CC_UNLIKELY(atrace_is_tag_enabled(tag))) {
         char c = 'E';
-        write(atrace_marker_fd, &c, 1);
+        TEMP_FAILURE_RETRY(write(atrace_marker_fd, &c, 1));
     }
 }
 
@@ -252,7 +249,7 @@ static inline void atrace_int64(uint64_t tag, const char* name, int64_t value)
     }
 }
 
-#else // not HAVE_ANDROID_OS
+#else // !__linux__
 
 #define ATRACE_INIT()
 #define ATRACE_GET_ENABLED_TAGS()
@@ -263,7 +260,7 @@ static inline void atrace_int64(uint64_t tag, const char* name, int64_t value)
 #define ATRACE_ASYNC_END(name, cookie)
 #define ATRACE_INT(name, value)
 
-#endif // not HAVE_ANDROID_OS
+#endif // !__linux__
 
 __END_DECLS
 

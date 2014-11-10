@@ -29,15 +29,11 @@
 #define _LIBS_LOG_LOG_H
 
 #include <sys/types.h>
-#ifdef HAVE_PTHREADS
-#include <pthread.h>
-#endif
 #include <stdarg.h>
 #include <stdio.h>
 #include <time.h>
 #include <unistd.h>
 #include <log/logd.h>
-#include <log/uio.h>
 
 #ifdef __cplusplus
 extern "C" {

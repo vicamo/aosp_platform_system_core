@@ -28,10 +28,6 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <sys/types.h>
-#ifdef HAVE_PTHREADS
-#include <pthread.h>
-#endif
-#include <log/uio.h>
 #include <stdarg.h>
 
 #ifdef __cplusplus

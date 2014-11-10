@@ -39,16 +39,12 @@
 #include <sys/prctl.h>
 #endif
 
+#include <bionic/bionic.h>
+
 #include <utils/threads.h>
 #include <utils/Log.h>
 
 #include <cutils/sched_policy.h>
-
-#ifdef HAVE_ANDROID_OS
-# define __android_unused
-#else
-# define __android_unused __attribute__((__unused__))
-#endif
 
 /*
  * ===========================================================================
@@ -122,7 +118,7 @@ void androidSetThreadName(const char* name) {
 
 int androidCreateRawThreadEtc(android_thread_func_t entryFunction,
                                void *userData,
-                               const char* threadName __android_unused,
+                               const char* threadName,
                                int32_t threadPriority,
                                size_t threadStackSize,
                                android_thread_id_t *threadId)
@@ -131,7 +127,6 @@ int androidCreateRawThreadEtc(android_thread_func_t entryFunction,
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
-#ifdef HAVE_ANDROID_OS  /* valgrind is rejecting RT-priority create reqs */
     if (threadPriority != PRIORITY_DEFAULT || threadName != NULL) {
         // Now that the pthread_t has a method to find the associated
         // android_thread_id_t (pid) from pthread_t, it would be possible to avoid
@@ -148,7 +143,6 @@ int androidCreateRawThreadEtc(android_thread_func_t entryFunction,
         entryFunction = (android_thread_func_t)&thread_data_t::trampoline;
         userData = t;            
     }
-#endif
 
     if (threadStackSize) {
         pthread_attr_setstacksize(&attr, threadStackSize);
@@ -174,13 +168,6 @@ int androidCreateRawThreadEtc(android_thread_func_t entryFunction,
     }
     return 1;
 }
-
-#ifdef HAVE_ANDROID_OS
-static pthread_t android_thread_id_t_to_pthread(android_thread_id_t thread)
-{
-    return (pthread_t) thread;
-}
-#endif
 
 android_thread_id_t androidGetThreadId()
 {
@@ -303,7 +290,6 @@ void androidSetCreateThreadFunc(android_create_thread_fn func)
     gCreateThreadFn = func;
 }
 
-#ifdef HAVE_ANDROID_OS
 int androidSetThreadPriority(pid_t tid, int pri)
 {
     int rc = 0;
@@ -338,8 +324,6 @@ int androidGetThreadPriority(pid_t tid) {
     return ANDROID_PRIORITY_NORMAL;
 #endif
 }
-
-#endif
 
 namespace android {
 
@@ -663,14 +647,21 @@ Thread::Thread(bool canCallJava)
         mLock("Thread::mLock"),
         mStatus(NO_ERROR),
         mExitPending(false), mRunning(false)
-#ifdef HAVE_ANDROID_OS
         , mTid(-1)
-#endif
 {
+#if !defined(HAVE_PTHREAD_GETTID_NP)
+    mTidLock.lock();
+#endif
 }
 
 Thread::~Thread()
 {
+#if !defined(HAVE_PTHREAD_GETTID_NP)
+    if (mTid < 0) {
+        // mTid is never assigned, so mTidLock is not unlocked.
+        mTidLock.unlock();
+    }
+#endif
 }
 
 status_t Thread::readyToRun()
@@ -733,9 +724,10 @@ int Thread::_threadLoop(void* user)
     wp<Thread> weak(strong);
     self->mHoldSelf.clear();
 
-#ifdef HAVE_ANDROID_OS
     // this is very useful for debugging with gdb
     self->mTid = gettid();
+#if !defined(HAVE_PTHREAD_GETTID_NP)
+    self->mTidLock.unlock();
 #endif
 
     bool first = true;
@@ -844,22 +836,25 @@ bool Thread::isRunning() const {
     return mRunning;
 }
 
-#ifdef HAVE_ANDROID_OS
 pid_t Thread::getTid() const
 {
     // mTid is not defined until the child initializes it, and the caller may need it earlier
     Mutex::Autolock _l(mLock);
     pid_t tid;
     if (mRunning) {
-        pthread_t pthread = android_thread_id_t_to_pthread(mThread);
+#if defined(HAVE_PTHREAD_GETTID_NP)
+        pthread_t pthread = (pthread_t) mThread;
         tid = pthread_gettid_np(pthread);
+#else
+        Mutex::Autolock _tl(mTidLock);
+        tid = mTid;
+#endif
     } else {
         ALOGW("Thread (this=%p): getTid() is undefined before run()", this);
         tid = -1;
     }
     return tid;
 }
-#endif
 
 bool Thread::exitPending() const
 {
